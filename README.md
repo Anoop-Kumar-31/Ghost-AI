@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./images/GhostAi.png" alt="Ghost AI Preview">
+<img src="./images/GhostAi.png" alt="Ghost AI Preview" width="90%">
 
 # 👻 Ghost AI
 ### The Stealth AI Desktop Assistant That Stays Out of Your Way.
