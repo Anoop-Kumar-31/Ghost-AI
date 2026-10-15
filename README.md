@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="./images/GhostAi.png" alt="Ghost AI Preview">
+
 # 👻 Ghost AI
 ### The Stealth AI Desktop Assistant That Stays Out of Your Way.
 *Invisible to Screen Shares • Click-Through Ghost Mode • Multi-Chat History • Bring Your Own Key*
