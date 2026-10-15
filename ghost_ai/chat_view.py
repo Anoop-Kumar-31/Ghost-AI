@@ -5,8 +5,18 @@ copying responses, and user input with keyboard shortcuts.
 Strictly preserves the standard ArrowCursor across all elements.
 """
 
+import re
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+
+try:
+    from pygments import highlight
+    from pygments.lexers import get_lexer_by_name, guess_lexer, TextLexer
+    from pygments.formatters import HtmlFormatter
+    from pygments.util import ClassNotFound
+    _PYGMENTS = True
+except ImportError:
+    _PYGMENTS = False
 from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtGui import (
     QPainter,
@@ -179,7 +189,109 @@ class MarkdownBrowser(QTextBrowser):
         )
 
         if content:
-            self.setMarkdown(content)
+            self.set_content(content)
+
+    # ------------------------------------------------------------------
+    # Pygments-powered HTML renderer
+    # ------------------------------------------------------------------
+    _FENCED_RE = re.compile(
+        r"```(?P<lang>[\w+-]*)\n(?P<code>.*?)```",
+        re.DOTALL,
+    )
+    # CSS for code blocks injected once into the document stylesheet
+    _PYGMENTS_CSS = HtmlFormatter(style="monokai").get_style_defs(".highlight") if _PYGMENTS else ""
+
+    @classmethod
+    def _highlight_code(cls, lang: str, code: str) -> str:
+        """Return highlighted HTML snippet for a code block."""
+        if not _PYGMENTS:
+            escaped = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            return f'<pre style="background:#1e1e1e;padding:8px;border-radius:6px;"><code>{escaped}</code></pre>'
+        try:
+            lexer = get_lexer_by_name(lang.strip()) if lang.strip() else guess_lexer(code)
+        except ClassNotFound:
+            lexer = TextLexer()
+        formatter = HtmlFormatter(style="monokai", nowrap=False, cssclass="highlight")
+        return highlight(code, lexer, formatter)
+
+    @classmethod
+    def _markdown_to_html(cls, md: str) -> str:
+        """Convert Markdown with fenced code blocks to HTML."""
+        # Escape HTML in non-code sections then substitute code blocks
+        parts = []
+        last = 0
+        for m in cls._FENCED_RE.finditer(md):
+            before = md[last:m.start()]
+            parts.append(cls._markdown_prose_to_html(before))
+            parts.append(cls._highlight_code(m.group("lang"), m.group("code")))
+            last = m.end()
+        parts.append(cls._markdown_prose_to_html(md[last:]))
+        body = "".join(parts)
+        css = cls._PYGMENTS_CSS
+        return f"""<html><head><style>
+{css}
+body {{ color:#f4f4f5; font-family:'Segoe UI',Roboto,sans-serif; font-size:11px; }}
+code {{ background:rgba(255,255,255,0.1); color:#93c5fd; border-radius:3px;
+       font-family:Consolas,'Courier New',monospace; padding:1px 3px; }}
+p {{ margin:0 0 4px 0; line-height:1.4; }}
+ul,ol {{ margin-left:14px; padding-left:0; }}
+a {{ color:#60a5fa; }}
+.highlight {{ background:#272822; border-radius:6px; padding:6px;
+              margin:4px 0; border:1px solid rgba(255,255,255,0.08); }}
+.highlight pre {{ background:transparent; margin:0; padding:0;
+                  font-family:Consolas,'Courier New',monospace; font-size:11px; }}
+</style></head><body>{body}</body></html>"""
+
+    @staticmethod
+    def _markdown_prose_to_html(text: str) -> str:
+        """Minimal Markdown → HTML for prose sections (bold, italic, inline code, headers, lists)."""
+        if not text:
+            return ""
+        # Escape raw HTML chars first
+        text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        lines = text.split("\n")
+        html_lines = []
+        in_ul = False
+        for line in lines:
+            stripped = line.rstrip()
+            # Headers
+            h = re.match(r'^(#{1,6})\s+(.*)', stripped)
+            if h:
+                if in_ul:
+                    html_lines.append("</ul>"); in_ul = False
+                lvl = len(h.group(1))
+                html_lines.append(f"<h{lvl}>{_inline_md(h.group(2))}</h{lvl}>")
+                continue
+            # Unordered list
+            li = re.match(r'^[\*\-\+]\s+(.*)', stripped)
+            if li:
+                if not in_ul:
+                    html_lines.append("<ul>"); in_ul = True
+                html_lines.append(f"<li>{_inline_md(li.group(1))}</li>")
+                continue
+            # Ordered list
+            oli = re.match(r'^\d+\.\s+(.*)', stripped)
+            if oli:
+                if in_ul:
+                    html_lines.append("</ul>"); in_ul = False
+                html_lines.append(f"<li>{_inline_md(oli.group(1))}</li>")
+                continue
+            if in_ul:
+                html_lines.append("</ul>"); in_ul = False
+            # Blank line → paragraph break
+            if stripped == "":
+                html_lines.append("<p></p>")
+            else:
+                html_lines.append(f"<p>{_inline_md(stripped)}</p>")
+        if in_ul:
+            html_lines.append("</ul>")
+        return "\n".join(html_lines)
+
+    def set_content(self, md: str) -> None:
+        """Render Markdown with highlighted code blocks as HTML."""
+        html = self._markdown_to_html(md)
+        self.setHtml(html)
+        self.adjust_height()
 
     def enterEvent(self, event) -> None:
         self.setCursor(Qt.CursorShape.ArrowCursor)
@@ -192,8 +304,8 @@ class MarkdownBrowser(QTextBrowser):
         super().mouseMoveEvent(event)
 
     def setMarkdown(self, markdown: str) -> None:
-        super().setMarkdown(markdown)
-        self.adjust_height()
+        """Override to route through our HTML renderer."""
+        self.set_content(markdown)
 
     def adjust_height(self) -> None:
         vw = self.viewport().width()
@@ -205,6 +317,17 @@ class MarkdownBrowser(QTextBrowser):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self.adjust_height()
+
+
+def _inline_md(text: str) -> str:
+    """Apply inline Markdown: bold, italic, inline code."""
+    # inline code  `...`
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    # bold  **...**
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    # italic  *...*
+    text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
+    return text
 
 
 class MessageBubble(QFrame):
@@ -294,7 +417,7 @@ class MessageBubble(QFrame):
     def update_content(self, text: str) -> None:
         """Update live streamed Markdown content."""
         self.content = text
-        self.text_lbl.setMarkdown(text)
+        self.text_lbl.set_content(text)
 
     def _copy_to_clipboard(self) -> None:
         clipboard = QGuiApplication.clipboard()
@@ -587,7 +710,7 @@ class ChatView(QWidget):
                     timestamp=m.get("timestamp", ""),
                     parent=self.messages_container,
                 )
-                self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
+                self._add_bubble_row(bubble)
 
         self._scroll_to_bottom()
         self.check_api_key_banner()
@@ -602,6 +725,22 @@ class ChatView(QWidget):
         QTimer.singleShot(50, lambda: self.scroll_area.verticalScrollBar().setValue(
             self.scroll_area.verticalScrollBar().maximum()
         ))
+
+    def _add_bubble_row(self, bubble: MessageBubble) -> None:
+        """Wrap a bubble in a row widget so user bubbles sit right and AI bubbles sit left."""
+        row = QWidget(self.messages_container)
+        row.setCursor(Qt.CursorShape.ArrowCursor)
+        row.setStyleSheet("background: transparent;")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(0)
+        if bubble.role == "user":
+            row_layout.addStretch(1)
+            row_layout.addWidget(bubble, 4)
+        else:
+            row_layout.addWidget(bubble, 4)
+            row_layout.addStretch(1)
+        self.messages_layout.insertWidget(self.messages_layout.count() - 1, row)
 
     def _on_title_edited(self) -> None:
         if not self._active_chat:
@@ -649,11 +788,11 @@ class ChatView(QWidget):
         self.chat_updated.emit()
 
         user_bubble = MessageBubble("user", text, now_iso, self.messages_container)
-        self.messages_layout.insertWidget(self.messages_layout.count() - 1, user_bubble)
+        self._add_bubble_row(user_bubble)
 
         # Prepare AI response placeholder
         self._streaming_bubble = MessageBubble("assistant", "...", now_iso, self.messages_container)
-        self.messages_layout.insertWidget(self.messages_layout.count() - 1, self._streaming_bubble)
+        self._add_bubble_row(self._streaming_bubble)
         self._scroll_to_bottom()
 
         # Start background worker
