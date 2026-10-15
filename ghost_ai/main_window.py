@@ -283,6 +283,7 @@ class MainWindow(QWidget):
 
     def close_application(self) -> None:
         """Safely persist state and terminate the application."""
+        self.chat_view.stop_voice_recording()
         self._save_state()
         self.controls.close()
         self.close()

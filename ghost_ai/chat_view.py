@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 
 from .config import load_config
 from .ai_service import AIChatWorker
+from .voice_worker import MicVoiceWorker, SysAudioWorker
 
 
 class NoIBeamLineEdit(QLineEdit):
@@ -195,29 +196,44 @@ class MarkdownBrowser(QTextBrowser):
     # Pygments-powered HTML renderer
     # ------------------------------------------------------------------
     _FENCED_RE = re.compile(
-        r"```(?P<lang>[\w+-]*)\n(?P<code>.*?)```",
+        r"```(?P<lang>[\w+-]*)\s*\n?(?P<code>.*?)```",
         re.DOTALL,
     )
-    # CSS for code blocks injected once into the document stylesheet
-    _PYGMENTS_CSS = HtmlFormatter(style="monokai").get_style_defs(".highlight") if _PYGMENTS else ""
+    # VS Code Dark+ theme styles using Pygments one-dark
+    _PYGMENTS_CSS = HtmlFormatter(style="one-dark").get_style_defs(".highlight") if _PYGMENTS else ""
 
     @classmethod
     def _highlight_code(cls, lang: str, code: str) -> str:
-        """Return highlighted HTML snippet for a code block."""
+        """Return VS Code styled highlighted HTML snippet for a code block."""
+        lang_str = lang.strip().lower() if lang else "code"
         if not _PYGMENTS:
             escaped = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            return f'<pre style="background:#1e1e1e;padding:8px;border-radius:6px;"><code>{escaped}</code></pre>'
+            return (
+                f'<div style="margin:6px 0; border:1px solid rgba(255,255,255,0.12); border-radius:6px; background:#1e1e1e; overflow:hidden;">'
+                f'<div style="background:#252526; color:#858585; font-size:10px; font-weight:600; font-family:Consolas,monospace; padding:3px 8px; border-bottom:1px solid rgba(255,255,255,0.08);">{lang_str.upper()}</div>'
+                f'<pre style="margin:0; padding:8px; font-family:Consolas,monospace; font-size:11px; color:#d4d4d4;"><code>{escaped}</code></pre>'
+                f'</div>'
+            )
         try:
-            lexer = get_lexer_by_name(lang.strip()) if lang.strip() else guess_lexer(code)
+            lexer = get_lexer_by_name(lang_str) if lang.strip() else guess_lexer(code)
         except ClassNotFound:
             lexer = TextLexer()
-        formatter = HtmlFormatter(style="monokai", nowrap=False, cssclass="highlight")
-        return highlight(code, lexer, formatter)
+        formatter = HtmlFormatter(style="one-dark", nowrap=False, cssclass="highlight")
+        highlighted = highlight(code, lexer, formatter)
+        header_html = (
+            f'<div style="background:#252526; color:#858585; font-size:10px; font-weight:600; font-family:Consolas,monospace; '
+            f'padding:3px 8px; border-top-left-radius:6px; border-top-right-radius:6px; border-bottom:1px solid rgba(255,255,255,0.08); '
+            f'letter-spacing:0.5px;">{lang_str.upper()}</div>'
+        )
+        return (
+            f'<div style="margin:6px 0; border:1px solid rgba(255,255,255,0.12); border-radius:6px; background:#1e1e1e; overflow:hidden;">'
+            f'{header_html}{highlighted}'
+            f'</div>'
+        )
 
     @classmethod
     def _markdown_to_html(cls, md: str) -> str:
         """Convert Markdown with fenced code blocks to HTML."""
-        # Escape HTML in non-code sections then substitute code blocks
         parts = []
         last = 0
         for m in cls._FENCED_RE.finditer(md):
@@ -230,16 +246,15 @@ class MarkdownBrowser(QTextBrowser):
         css = cls._PYGMENTS_CSS
         return f"""<html><head><style>
 {css}
-body {{ color:#f4f4f5; font-family:'Segoe UI',Roboto,sans-serif; font-size:11px; }}
+body {{ color:#f4f4f5; font-family:'Segoe UI',Roboto,sans-serif; font-size:11px; text-align:left; }}
 code {{ background:rgba(255,255,255,0.1); color:#93c5fd; border-radius:3px;
        font-family:Consolas,'Courier New',monospace; padding:1px 3px; }}
-p {{ margin:0 0 4px 0; line-height:1.4; }}
-ul,ol {{ margin-left:14px; padding-left:0; }}
+p {{ margin:0 0 4px 0; line-height:1.4; text-align:left; }}
+ul,ol {{ margin-left:14px; padding-left:0; text-align:left; }}
 a {{ color:#60a5fa; }}
-.highlight {{ background:#272822; border-radius:6px; padding:6px;
-              margin:4px 0; border:1px solid rgba(255,255,255,0.08); }}
-.highlight pre {{ background:transparent; margin:0; padding:0;
-                  font-family:Consolas,'Courier New',monospace; font-size:11px; }}
+.highlight {{ background:#1e1e1e !important; border:none; padding:6px 8px; margin:0; }}
+.highlight pre {{ background:transparent !important; margin:0; padding:0;
+                  font-family:'Cascadia Code',Consolas,'Courier New',monospace; font-size:11px; line-height:1.45; }}
 </style></head><body>{body}</body></html>"""
 
     @staticmethod
@@ -443,6 +458,8 @@ class ChatView(QWidget):
         self._active_chat: Optional[Dict[str, Any]] = None
         self._current_worker: Optional[AIChatWorker] = None
         self._streaming_bubble: Optional[MessageBubble] = None
+        self._mic_worker: Optional[MicVoiceWorker] = None
+        self._sys_worker: Optional[SysAudioWorker] = None
 
         self._init_ui()
 
@@ -639,10 +656,63 @@ class ChatView(QWidget):
         self.scroll_area.setWidget(self.messages_container)
         main_layout.addWidget(self.scroll_area, 1)
 
+        # Voice Status Banner (shows live feedback when recording or transcribing)
+        self.voice_status_frame = QFrame(self)
+        self.voice_status_frame.setObjectName("VoiceStatusBanner")
+        self.voice_status_frame.setStyleSheet(
+            """
+            QFrame#VoiceStatusBanner {
+                background-color: rgba(24, 24, 27, 0.95);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 6px;
+                padding: 2px 6px;
+            }
+            """
+        )
+        vs_layout = QHBoxLayout(self.voice_status_frame)
+        vs_layout.setContentsMargins(8, 4, 8, 4)
+        vs_layout.setSpacing(6)
+
+        self.voice_status_lbl = QLabel(self.voice_status_frame)
+        self.voice_status_lbl.setStyleSheet("color: #38bdf8; font-size: 10px; font-weight: 500; background: transparent;")
+        vs_layout.addWidget(self.voice_status_lbl, 1)
+
+        self.voice_cancel_btn = QPushButton("✕", self.voice_status_frame)
+        self.voice_cancel_btn.setFixedSize(18, 18)
+        self.voice_cancel_btn.setCursor(Qt.CursorShape.ArrowCursor)
+        self.voice_cancel_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.voice_cancel_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #a1a1aa; border: none; font-size: 11px; }"
+            "QPushButton:hover { color: #ffffff; }"
+        )
+        self.voice_cancel_btn.clicked.connect(self._cancel_voice_recording)
+        vs_layout.addWidget(self.voice_cancel_btn)
+
+        self.voice_status_frame.hide()
+        main_layout.addWidget(self.voice_status_frame)
+
         # Bottom Input Row
         input_row = QHBoxLayout()
         input_row.setContentsMargins(0, 0, 0, 0)
         input_row.setSpacing(6)
+
+        self.mic_btn = QPushButton("🎙️", self)
+        self.mic_btn.setFixedSize(36, 36)
+        self.mic_btn.setCursor(Qt.CursorShape.ArrowCursor)
+        self.mic_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.mic_btn.setToolTip("Record Microphone (Speech-to-Text)")
+        self.mic_btn.setStyleSheet(self._mic_btn_idle_style())
+        self.mic_btn.clicked.connect(self._toggle_mic_recording)
+        input_row.addWidget(self.mic_btn)
+
+        self.sys_audio_btn = QPushButton("🔊", self)
+        self.sys_audio_btn.setFixedSize(36, 36)
+        self.sys_audio_btn.setCursor(Qt.CursorShape.ArrowCursor)
+        self.sys_audio_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.sys_audio_btn.setToolTip("Capture Meeting/System Audio (Google Meet / Zoom loopback)")
+        self.sys_audio_btn.setStyleSheet(self._sys_audio_btn_idle_style())
+        self.sys_audio_btn.clicked.connect(self._toggle_sys_audio_recording)
+        input_row.addWidget(self.sys_audio_btn)
 
         self.input_edit = ChatInputEdit(self)
         self.input_edit.send_requested.connect(self._on_send_clicked)
@@ -736,10 +806,10 @@ class ChatView(QWidget):
         row_layout.setSpacing(0)
         if bubble.role == "user":
             row_layout.addStretch(1)
-            row_layout.addWidget(bubble, 4)
+            row_layout.addWidget(bubble, 0)
         else:
-            row_layout.addWidget(bubble, 4)
-            row_layout.addStretch(1)
+            row_layout.addWidget(bubble, 1)
+            row_layout.addStretch(0)
         self.messages_layout.insertWidget(self.messages_layout.count() - 1, row)
 
     def _on_title_edited(self) -> None:
@@ -874,3 +944,179 @@ class ChatView(QWidget):
         if self._streaming_bubble:
             self._streaming_bubble.update_content(f"⚠️ {err_msg}")
         self._scroll_to_bottom()
+
+    # ------------------------------------------------------------------
+    # Voice-to-Text (Microphone & System/Meeting Audio WASAPI Loopback)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _mic_btn_idle_style() -> str:
+        return """
+            QPushButton {
+                background-color: rgba(39, 39, 42, 0.85);
+                color: #a1a1aa;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 0.15);
+                color: #ffffff;
+                border-color: rgba(255, 255, 255, 0.25);
+            }
+        """
+
+    @staticmethod
+    def _mic_btn_active_style() -> str:
+        return """
+            QPushButton {
+                background-color: #dc2626;
+                color: #ffffff;
+                border: 1px solid #ef4444;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #b91c1c;
+            }
+        """
+
+    @staticmethod
+    def _sys_audio_btn_idle_style() -> str:
+        return """
+            QPushButton {
+                background-color: rgba(39, 39, 42, 0.85);
+                color: #a1a1aa;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 0.15);
+                color: #ffffff;
+                border-color: rgba(255, 255, 255, 0.25);
+            }
+        """
+
+    @staticmethod
+    def _sys_audio_btn_active_style() -> str:
+        return """
+            QPushButton {
+                background-color: #7c3aed;
+                color: #ffffff;
+                border: 1px solid #8b5cf6;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #6d28d9;
+            }
+        """
+
+    def _toggle_mic_recording(self) -> None:
+        """Toggle microphone recording and transcription."""
+        if self._mic_worker and self._mic_worker.isRunning():
+            self.voice_status_lbl.setText("⏳ Transcribing microphone audio with Whisper AI...")
+            self.mic_btn.setText("⏳")
+            self._mic_worker.stop()
+            return
+
+        if self._sys_worker and self._sys_worker.isRunning():
+            self._cancel_voice_recording()
+
+        self._mic_worker = MicVoiceWorker(self)
+        self._mic_worker.transcribed.connect(self._on_mic_transcribed)
+        self._mic_worker.error.connect(self._on_voice_error)
+        self._mic_worker.status.connect(self._on_voice_status)
+
+        self.mic_btn.setText("⏹")
+        self.mic_btn.setStyleSheet(self._mic_btn_active_style())
+        self.voice_status_lbl.setText("🎙️ Recording mic... Speak clearly, click ⏹ when done.")
+        self.voice_status_frame.show()
+        self._mic_worker.start()
+
+    def _toggle_sys_audio_recording(self) -> None:
+        """Toggle system/meeting audio loopback recording and transcription."""
+        if self._sys_worker and self._sys_worker.isRunning():
+            self.voice_status_lbl.setText("⏳ Transcribing meeting audio with Whisper AI...")
+            self.sys_audio_btn.setText("⏳")
+            self._sys_worker.stop()
+            return
+
+        if self._mic_worker and self._mic_worker.isRunning():
+            self._cancel_voice_recording()
+
+        self._sys_worker = SysAudioWorker(self)
+        self._sys_worker.transcribed.connect(self._on_sys_transcribed)
+        self._sys_worker.error.connect(self._on_voice_error)
+        self._sys_worker.status.connect(self._on_voice_status)
+
+        self.sys_audio_btn.setText("⏹")
+        self.sys_audio_btn.setStyleSheet(self._sys_audio_btn_active_style())
+        self.voice_status_lbl.setText("🔊 Capturing system audio (Google Meet / Zoom)... Click ⏹ when done.")
+        self.voice_status_frame.show()
+        self._sys_worker.start()
+
+    def _on_mic_transcribed(self, text: str) -> None:
+        text = text.strip()
+        if text:
+            cur = self.input_edit.toPlainText().strip()
+            if cur:
+                self.input_edit.setPlainText(f"{cur} {text}")
+            else:
+                self.input_edit.setPlainText(text)
+            self.input_edit.setFocus()
+            self.voice_status_lbl.setText("✅ Speech transcribed to prompt!")
+            QTimer.singleShot(2500, self.voice_status_frame.hide)
+        else:
+            self.voice_status_lbl.setText("ℹ️ No clear speech detected.")
+            QTimer.singleShot(2500, self.voice_status_frame.hide)
+        self._reset_voice_buttons()
+
+    def _on_sys_transcribed(self, text: str) -> None:
+        text = text.strip()
+        if text:
+            prefix = "Interviewer asked: "
+            cur = self.input_edit.toPlainText().strip()
+            if cur:
+                self.input_edit.setPlainText(f"{cur}\n\n{prefix}{text}")
+            else:
+                self.input_edit.setPlainText(f"{prefix}{text}")
+            self.input_edit.setFocus()
+            self.voice_status_lbl.setText("✅ Interviewer audio transcribed!")
+            QTimer.singleShot(2500, self.voice_status_frame.hide)
+        else:
+            self.voice_status_lbl.setText("ℹ️ No meeting audio detected.")
+            QTimer.singleShot(2500, self.voice_status_frame.hide)
+        self._reset_voice_buttons()
+
+    def _on_voice_error(self, err_msg: str) -> None:
+        self._reset_voice_buttons()
+        self.voice_status_lbl.setText(f"⚠️ {err_msg}")
+        self.voice_status_frame.show()
+
+    def _on_voice_status(self, st: str) -> None:
+        if st == "transcribing":
+            self.voice_status_lbl.setText("⏳ Transcribing audio with local Whisper AI...")
+
+    def _cancel_voice_recording(self) -> None:
+        if self._mic_worker and self._mic_worker.isRunning():
+            self._mic_worker.stop()
+            self._mic_worker.wait(1000)
+        if self._sys_worker and self._sys_worker.isRunning():
+            self._sys_worker.stop()
+            self._sys_worker.wait(1000)
+        self._reset_voice_buttons()
+        self.voice_status_frame.hide()
+
+    def _reset_voice_buttons(self) -> None:
+        self.mic_btn.setText("🎙️")
+        self.mic_btn.setStyleSheet(self._mic_btn_idle_style())
+        self.sys_audio_btn.setText("🔊")
+        self.sys_audio_btn.setStyleSheet(self._sys_audio_btn_idle_style())
+
+    def stop_voice_recording(self) -> None:
+        """Safely terminate any active voice workers on shutdown or view change."""
+        self._cancel_voice_recording()
+

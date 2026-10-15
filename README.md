@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./images/GhostAi.png" alt="Ghost AI Preview">
+<img src="./images/GhostAi.png" alt="Ghost AI Preview" width="600">
 
 # 👻 Ghost AI
 ### The Stealth AI Desktop Assistant That Stays Out of Your Way.
@@ -12,7 +12,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-0078D6.svg?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/Anoop-Kumar-31/Ghost-AI)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52.svg?style=for-the-badge&logo=qt&logoColor=white)](https://www.qt.io/qt-for-python)
-[![Tests](https://img.shields.io/badge/Tests-18%20Passing-success.svg?style=for-the-badge)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-23%20Passing-success.svg?style=for-the-badge)](tests/)
 
 </div>
 
@@ -25,6 +25,10 @@
 Just like **GhostNotes**, Ghost AI features true native OS-level **screen capture invisibility** and **click-through Ghost Mode**, but brings the full power of modern Large Language Models directly to your floating overlay:
 
 - **💬 Real-Time Streaming AI**: Chat with cutting-edge models (GPT-4o, Claude 3.5 Sonnet, DeepSeek, Groq, Ollama) with live streaming text responses.
+- **🎙️ Microphone Voice-to-Text**: Click `🎙️` to dictate questions hands-free; transcribed locally with on-device Whisper AI.
+- **🔊 Meeting & Interview Audio Capture**: Click `🔊` to capture the interviewer's voice from Google Meet, Zoom, or Teams via WASAPI loopback / Stereo Mix and transcribe directly into the prompt box.
+- **💻 VS Code Dark+ Code Highlighting**: Code blocks rendered with language titles, syntax highlighting, and `#1e1e1e` dark theme.
+- **🗨️ ChatGPT-Style Layout**: User messages aligned to the right with left-aligned prose; AI answers left-aligned with full width for code.
 - **📚 Multi-Chat History**: Browse past conversations in responsive Grid (`⊞`) or List (`☰`) modes, search past dialogues, rename, and delete sessions.
 - **🔑 Bring Your Own Key (BYOK)**: Connect your favorite providers directly—OpenAI (ChatGPT), OpenRouter, Groq, DeepSeek, Anthropic, or local Ollama / LM Studio.
 - **🛡️ Capture Invisibility**: Completely invisible to screenshots, Zoom, Google Meet, Microsoft Teams, Discord, and OBS via native Win32 `WDA_EXCLUDEFROMCAPTURE` and macOS `NSWindowSharingNone`.
@@ -100,6 +104,37 @@ You can use Ghost AI **100% free** without adding credit cards or payment info u
    - In the **Model** field, paste or type the model ID you chose (e.g., `meta-llama/llama-3.3-70b-instruct:free`).
    - Click **Test** to verify connection, then click **Save**.
    - You're ready to chat with AI directly in your floating stealth window!
+
+---
+
+## 🎙️ Voice-to-Text & Live Interview Setup
+
+Ghost AI includes local, offline AI speech-to-text powered by **faster-whisper**:
+
+### 1. Microphone Voice Input (`🎙️`)
+- Click the `🎙️` button to start recording your microphone.
+- Speak your prompt or question hands-free.
+- Click `⏹` to stop; the audio is transcribed locally on your CPU and automatically inserted into the prompt input box.
+
+### 2. System / Meeting Audio Capture (`🔊`)
+- Ideal during live technical interviews on **Google Meet**, **Zoom**, or **Microsoft Teams**.
+- Click the `🔊` button when the interviewer begins asking a question.
+- Ghost AI records the audio coming from your speakers/headphones via Windows WASAPI loopback / Stereo Mix.
+- Click `⏹` when the interviewer finishes speaking.
+- Ghost AI transcribes the question and prefixes it into the prompt box as:
+  ```
+  Interviewer asked: <question text>
+  ```
+- Hit `Enter` to get an instant, stealth streamed answer from your selected AI model!
+
+> [!TIP]
+> **Enabling Stereo Mix in Windows:**
+> If `🔊` indicates no loopback device found:
+> 1. Right-click the Speaker icon on your taskbar → select **Sound settings**.
+> 2. Click **More sound settings** → navigate to the **Recording** tab.
+> 3. Right-click any blank area → check **Show Disabled Devices**.
+> 4. Right-click **Stereo Mix** and choose **Enable**.
+> *(Alternatively, install free [VB-Cable](https://vb-audio.com/Cable/) virtual audio driver).*
 
 ---
 

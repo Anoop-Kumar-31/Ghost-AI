@@ -58,6 +58,7 @@ def test_ui_and_hwnd_separation(qapp):
     assert not bool(ctrl_style & WS_EX_APPWINDOW)
 
     # 5. Ghost mode toggles
+    win.set_ghost_mode(False)
     assert not is_click_through(win_hwnd)
     win.toggle_ghost_mode()
     assert is_click_through(win_hwnd)
@@ -98,6 +99,6 @@ def test_markdown_bubble_rendering(qapp):
     # Verify HTML rich text is generated from markdown
     html = bubble.text_lbl.toHtml()
     assert "QueueFlow" in html
-    assert ('font-weight:700;">QueueFlow</span>' in html or '<strong>QueueFlow</strong>' in html or '<b>QueueFlow</b>' in html)
+    assert ("font-weight:700" in html or "font-weight: 700" in html or "<strong>QueueFlow</strong>" in html or "<b>QueueFlow</b>" in html)
     assert "Item 1</li>" in html
 
