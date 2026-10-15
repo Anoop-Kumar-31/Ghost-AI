@@ -79,6 +79,26 @@ Settings are stored securely and atomically in your local user directory:
 - **Windows**: `%LOCALAPPDATA%\GhostAI\config.json`
 - **macOS/Linux**: `~/.config/ghost_ai/config.json`
 
+### 🆓 Free AI Setup Guide (OpenRouter Free Models)
+
+You can use Ghost AI **100% free** without adding credit cards or payment info using OpenRouter's free model collection:
+
+1. **Browse Free Models**:
+   Visit the official list of free models:
+   👉 **[OpenRouter Free Text Models Catalog](https://openrouter.ai/models?max_price=0&output_modalities=text&variant=free&order=most-popular)**  
+   *(Popular picks: `meta-llama/llama-3.3-70b-instruct:free`, `deepseek/deepseek-r1:free`, `google/gemini-2.0-flash-exp:free`, `mistralai/mistral-7b-instruct:free`)*
+
+2. **Get Your Free API Key**:
+   Create a free account and generate an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
+
+3. **Configure Ghost AI**:
+   - In Ghost AI, click the **⚙ Settings** button in the header (or press `Ctrl+,`).
+   - Set **AI Provider** to **OpenRouter**.
+   - Paste your key into the **API Key** box (`sk-or-v1-...`).
+   - In the **Model** field, paste or type the model ID you chose (e.g., `meta-llama/llama-3.3-70b-instruct:free`).
+   - Click **Test** to verify connection, then click **Save**.
+   - You're ready to chat with AI directly in your floating stealth window!
+
 ---
 
 ## ⌨️ Keyboard Shortcuts

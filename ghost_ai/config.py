@@ -24,12 +24,15 @@ PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
     },
     "OpenRouter": {
         "base_url": "https://openrouter.ai/api/v1",
-        "default_model": "openai/gpt-4o-mini",
+        "default_model": "meta-llama/llama-3.3-70b-instruct:free",
         "models": [
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "deepseek/deepseek-r1:free",
+            "google/gemini-2.0-flash-exp:free",
+            "mistralai/mistral-7b-instruct:free",
             "openai/gpt-4o-mini",
             "anthropic/claude-3.5-sonnet",
             "deepseek/deepseek-chat",
-            "meta-llama/llama-3.3-70b-instruct",
         ],
         "api_type": "openai",
     },

@@ -132,6 +132,7 @@ class AIChatWorker(QThread):
             stream=stream,
             timeout=(10, 60),
         )
+        response.encoding = "utf-8"
 
         if response.status_code != 200:
             self._handle_http_error(response)
@@ -139,12 +140,15 @@ class AIChatWorker(QThread):
 
         accumulated = []
         if stream:
-            for line in response.iter_lines(decode_unicode=True):
+            for raw_line in response.iter_lines():
                 if self._is_cancelled:
                     break
-                if not line:
+                if not raw_line:
                     continue
-                line = line.strip()
+                if isinstance(raw_line, bytes):
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                else:
+                    line = str(raw_line).strip()
                 if line.startswith("data: "):
                     data_str = line[6:].strip()
                     if data_str == "[DONE]":
@@ -207,6 +211,7 @@ class AIChatWorker(QThread):
             stream=stream,
             timeout=(10, 60),
         )
+        response.encoding = "utf-8"
 
         if response.status_code != 200:
             self._handle_http_error(response)
@@ -214,12 +219,15 @@ class AIChatWorker(QThread):
 
         accumulated = []
         if stream:
-            for line in response.iter_lines(decode_unicode=True):
+            for raw_line in response.iter_lines():
                 if self._is_cancelled:
                     break
-                if not line:
+                if not raw_line:
                     continue
-                line = line.strip()
+                if isinstance(raw_line, bytes):
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                else:
+                    line = str(raw_line).strip()
                 if line.startswith("data: "):
                     data_str = line[6:].strip()
                     try:

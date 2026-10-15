@@ -87,3 +87,17 @@ def test_ui_and_hwnd_separation(qapp):
     assert win.isVisible()
 
     win.close_application()
+
+
+def test_markdown_bubble_rendering(qapp):
+    from ghost_ai.chat_view import MessageBubble
+    bubble = MessageBubble("assistant", "**QueueFlow** is a platform — I handled the full stack:\n- Item 1\n- Item 2")
+    qapp.processEvents()
+    assert bubble.cursor().shape() == Qt.CursorShape.ArrowCursor
+    assert bubble.text_lbl.cursor().shape() == Qt.CursorShape.ArrowCursor
+    # Verify HTML rich text is generated from markdown
+    html = bubble.text_lbl.toHtml()
+    assert "QueueFlow" in html
+    assert ('font-weight:700;">QueueFlow</span>' in html or '<strong>QueueFlow</strong>' in html or '<b>QueueFlow</b>' in html)
+    assert "Item 1</li>" in html
+

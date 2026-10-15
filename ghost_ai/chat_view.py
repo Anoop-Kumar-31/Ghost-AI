@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QTextEdit,
+    QTextBrowser,
     QScrollArea,
     QPushButton,
     QFrame,
@@ -43,11 +44,17 @@ class NoIBeamLineEdit(QLineEdit):
 
     def enterEvent(self, event) -> None:
         self.setCursor(Qt.CursorShape.ArrowCursor)
-        super().enterEvent(event)
+        try:
+            super().enterEvent(event)
+        except Exception:
+            pass
 
     def mouseMoveEvent(self, event) -> None:
         self.setCursor(Qt.CursorShape.ArrowCursor)
-        super().mouseMoveEvent(event)
+        try:
+            super().mouseMoveEvent(event)
+        except Exception:
+            pass
 
 
 class ChatInputEdit(QTextEdit):
@@ -112,8 +119,96 @@ class ChatInputEdit(QTextEdit):
         self.setFixedHeight(new_height)
 
 
+class MarkdownBrowser(QTextBrowser):
+    """
+    QTextBrowser for rendering Markdown content cleanly with stealth ArrowCursor
+    and dynamic auto-height to prevent nested scrollbars.
+    """
+
+    def __init__(self, content: str = "", parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setOpenExternalLinks(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+
+        # Style sheet for typography & code blocks
+        self.setStyleSheet(
+            """
+            QTextBrowser {
+                color: #f4f4f5;
+                background: transparent;
+                border: none;
+                font-size: 11px;
+                font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+            }
+            """
+        )
+        self.document().setDefaultStyleSheet(
+            """
+            code {
+                background-color: rgba(255, 255, 255, 0.1);
+                color: #93c5fd;
+                border-radius: 3px;
+                font-family: Consolas, "Courier New", monospace;
+                padding: 1px 3px;
+            }
+            pre {
+                background-color: rgba(0, 0, 0, 0.35);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
+                padding: 6px;
+                font-family: Consolas, "Courier New", monospace;
+            }
+            a {
+                color: #60a5fa;
+                text-decoration: underline;
+            }
+            ul, ol {
+                margin-left: 14px;
+                padding-left: 0px;
+            }
+            p {
+                margin: 0px 0px 4px 0px;
+                line-height: 1.4;
+            }
+            """
+        )
+
+        if content:
+            self.setMarkdown(content)
+
+    def enterEvent(self, event) -> None:
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+        super().enterEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+        super().mouseMoveEvent(event)
+
+    def setMarkdown(self, markdown: str) -> None:
+        super().setMarkdown(markdown)
+        self.adjust_height()
+
+    def adjust_height(self) -> None:
+        vw = self.viewport().width()
+        if vw > 20:
+            self.document().setTextWidth(vw)
+        doc_h = int(self.document().documentLayout().documentSize().height())
+        self.setFixedHeight(max(24, doc_h + 6))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.adjust_height()
+
+
 class MessageBubble(QFrame):
-    """Styled message bubble for User or AI."""
+    """Styled message bubble for User or AI with full Markdown support."""
 
     def __init__(
         self,
@@ -192,32 +287,19 @@ class MessageBubble(QFrame):
         header.addWidget(copy_btn)
         layout.addLayout(header)
 
-        # Content text
-        self.text_lbl = QLabel(self.content, self)
-        self.text_lbl.setCursor(Qt.CursorShape.ArrowCursor)
-        self.text_lbl.setWordWrap(True)
-        self.text_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.text_lbl.setStyleSheet(
-            """
-            QLabel {
-                color: #f4f4f5;
-                font-size: 11px;
-                line-height: 1.4;
-                background: transparent;
-                border: none;
-            }
-            """
-        )
+        # Markdown Content Text Browser
+        self.text_lbl = MarkdownBrowser(self.content, self)
         layout.addWidget(self.text_lbl)
 
     def update_content(self, text: str) -> None:
-        """Update live streamed content."""
+        """Update live streamed Markdown content."""
         self.content = text
-        self.text_lbl.setText(text)
+        self.text_lbl.setMarkdown(text)
 
     def _copy_to_clipboard(self) -> None:
         clipboard = QGuiApplication.clipboard()
         clipboard.setText(self.content)
+
 
 
 class ChatView(QWidget):
