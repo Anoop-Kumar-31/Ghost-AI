@@ -206,8 +206,8 @@ class MainWindow(QWidget):
 
         # Apply native platform attributes (taskbar exclusion and capture protection)
         hwnd = int(self.winId())
-        # exclude_from_taskbar(hwnd)
-        # set_capture_excluded(hwnd, True)
+        exclude_from_taskbar(hwnd)
+        set_capture_excluded(hwnd, True)
 
         # Initialize and position floating controls
         self.controls.show_controls(self.geometry())
