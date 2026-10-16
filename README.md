@@ -1,163 +1,205 @@
 <div align="center">
 
-<img src="./images/GhostAi.png" alt="Ghost AI Preview" width="90%">
+<img src="./images/GhostAi.png" alt="Ghost AI desktop app preview" width="92%">
 
 # 👻 Ghost AI
-### The Stealth AI Desktop Assistant That Stays Out of Your Way.
-*Invisible to Screen Shares • Click-Through Ghost Mode • Multi-Chat History • Bring Your Own Key*
 
-<br/>
+### Your private, lightweight AI workspace companion.
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-0078D6.svg?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/Anoop-Kumar-31/Ghost-AI)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![GUI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52.svg?style=for-the-badge&logo=qt&logoColor=white)](https://www.qt.io/qt-for-python)
-[![Tests](https://img.shields.io/badge/Tests-18%20Passing-success.svg?style=for-the-badge)](tests/)
+**Less clutter. More focus. AI on your terms.**
+
+A discreet desktop AI assistant for quick answers, coding help, research, and everyday productivity — with a floating interface, multi-provider support, and a workspace designed to stay out of your way.
+
+<br>
+
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![Qt](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt-41CD52.svg?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-informational)](#platform-support)
 
 </div>
 
 ---
 
-## ⚡ What is Ghost AI?
+## ✨ Why Ghost AI?
 
-**Ghost AI** is a lightweight, frameless, always-on-top desktop AI companion designed for maximum discretion and zero productivity friction. 
+Ghost AI brings an AI chat window into your desktop workflow without making you switch constantly between applications. Keep it nearby when you need it, move it out of the way when you don't, and choose the AI provider that fits your needs.
 
-Just like **GhostNotes**, Ghost AI features true native OS-level **screen capture invisibility** and **click-through Ghost Mode**, but brings the full power of modern Large Language Models directly to your floating overlay:
+- **💬 Streaming AI responses** — see answers arrive as the model generates them.
+- **🗝️ Bring your own key** — configure supported cloud providers or compatible local model servers.
+- **🗂️ Multi-chat history** — revisit, search, rename, and manage conversations.
+- **👻 Floating, frameless interface** — a compact desktop companion designed to reduce visual clutter.
+- **🫥 Ghost Mode** — toggle click-through behavior so clicks can pass to the application underneath.
+- **🖥️ Capture-exclusion support** — uses operating-system features intended to exclude the app window from supported screen-capture paths. Behavior depends on OS, capture method, and application; do not treat this as a security boundary.
+- **⌨️ Keyboard shortcuts** — use common actions without navigating through menus.
+- **🎨 Customizable AI setup** — configure provider, model, endpoint, and API key in Settings.
 
-- **💬 Real-Time Streaming AI**: Chat with cutting-edge models (GPT-4o, Claude 3.5 Sonnet, DeepSeek, Groq, Ollama) with live streaming text responses.
-- **📚 Multi-Chat History**: Browse past conversations in responsive Grid (`⊞`) or List (`☰`) modes, search past dialogues, rename, and delete sessions.
-- **🔑 Bring Your Own Key (BYOK)**: Connect your favorite providers directly—OpenAI (ChatGPT), OpenRouter, Groq, DeepSeek, Anthropic, or local Ollama / LM Studio.
-- **🛡️ Capture Invisibility**: Completely invisible to screenshots, Zoom, Google Meet, Microsoft Teams, Discord, and OBS via native Win32 `WDA_EXCLUDEFROMCAPTURE` and macOS `NSWindowSharingNone`.
-- **👻 Click-Through Ghost Mode**: Toggle click-through transparency with `Ctrl+G` or the blue micro-dot. Clicks pass seamlessly to whatever application is beneath the overlay.
-- **🔕 Zero Desktop Clutter**: Excluded from Windows Taskbar, Alt+Tab, macOS Dock, and Cmd+Tab.
-- **🎯 Stealth Cursor**: Enforces a strict arrow cursor across the entire UI—no cursor changes that give away text inputs or clickable regions.
+> **Privacy note:** Ghost AI is a desktop client, not a guarantee of end-to-end privacy. When you use a cloud provider, the prompts and context you send are processed by that provider under its policies. Review the provider's terms and avoid sending secrets or sensitive information. Local providers such as Ollama can keep inference on your machine when configured to use a local endpoint.
 
----
+## 🖼️ Preview
 
-## 🚀 Quick Start
+The repository preview image is shown at the top of this README. Add more screenshots to `images/` and link them here as the interface evolves.
 
-### 1. Requirements
-- Python 3.10+ (Windows 10/11 or macOS 12+)
-- PySide6, requests, and pytest
+## 🚀 Getting started
 
-### 2. Installation
+### Requirements
+
+- Python 3.10 or newer
+- Windows 10/11 or a supported macOS version
+- An internet connection for cloud AI providers
+- An API key for the cloud provider you choose, or a running local model server
+
+### 1. Clone the repository
 
 ```bash
-# Clone the repository
 git clone https://github.com/Anoop-Kumar-31/Ghost-AI.git
 cd Ghost-AI
+```
 
-# Install dependencies
+### 2. Create and activate a virtual environment (recommended)
+
+**Windows PowerShell**
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+**macOS**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### 3. Install dependencies
+
+```bash
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 3. Launching
+### 4. Launch Ghost AI
 
 ```bash
-# Direct launch
 python main.py
-
-# Windows background silent launch (no console window)
-GhostAI.vbs
 ```
 
----
+On Windows, `GhostAI.vbs` is also provided for launching without keeping a console window open.
 
-## ⚙️ Configuration & Providers
+## ⚙️ Configure an AI provider
 
-Click the **⚙ Settings** button in the header (or press `Ctrl+,`) to configure your AI provider:
+1. Launch Ghost AI.
+2. Open **Settings** from the app header, or press `Ctrl + ,`.
+3. Choose a provider.
+4. Enter your API key and model ID, and set a base URL if the provider requires one.
+5. Use **Test** to verify the connection, then save your settings.
 
-| Provider | Supported Models | Base Endpoint |
-| :--- | :--- | :--- |
-| **OpenAI** | `gpt-4o-mini`, `gpt-4o`, `o3-mini`, `gpt-3.5-turbo` | `https://api.openai.com/v1` |
-| **OpenRouter** | `openai/gpt-4o-mini`, `anthropic/claude-3.5-sonnet`, `deepseek/deepseek-chat` | `https://openrouter.ai/api/v1` |
-| **Groq** | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `mixtral-8x7b-32768` | `https://api.groq.com/openai/v1` |
-| **DeepSeek** | `deepseek-chat`, `deepseek-reasoner` | `https://api.deepseek.com` |
-| **Anthropic** | `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022`, `claude-3-opus-20240229` | `https://api.anthropic.com` |
-| **Ollama (Local)** | `llama3.2`, `mistral`, `deepseek-r1`, `qwen2.5` | `http://localhost:11434/v1` |
-| **Custom** | Any OpenAI-compatible endpoint (LM Studio, LocalAI, vLLM) | Custom URL |
+Ghost AI supports the provider configurations currently available in the application. Typical endpoints include:
 
-Settings are stored securely and atomically in your local user directory:
-- **Windows**: `%LOCALAPPDATA%\GhostAI\config.json`
-- **macOS/Linux**: `~/.config/ghost_ai/config.json`
+| Provider | Base endpoint |
+|---|---|
+| OpenAI | `https://api.openai.com/v1` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
+| Groq | `https://api.groq.com/openai/v1` |
+| DeepSeek | `https://api.deepseek.com` |
+| Ollama (local) | `http://localhost:11434/v1` |
+| Custom OpenAI-compatible API | Set the endpoint provided by your service |
 
-### 🆓 Free AI Setup Guide (OpenRouter Free Models)
+Provider availability, model names, pricing, and limits can change. Check each provider's current documentation and enter a model ID supported by both the provider and the app. Anthropic uses a different API format; use the app's provider-specific configuration rather than assuming every provider accepts the OpenAI-compatible endpoint.
 
-You can use Ghost AI **100% free** without adding credit cards or payment info using OpenRouter's free model collection:
+### 🆓 Trying free models
 
-1. **Browse Free Models**:
-   Visit the official list of free models:
-   👉 **[OpenRouter Free Text Models Catalog](https://openrouter.ai/models?max_price=0&output_modalities=text&variant=free&order=most-popular)**  
-   *(Popular picks: `meta-llama/llama-3.3-70b-instruct:free`, `deepseek/deepseek-r1:free`, `google/gemini-2.0-flash-exp:free`, `mistralai/mistral-7b-instruct:free`)*
+Some providers offer free model tiers or limited free models, but availability and quotas change frequently. For example, OpenRouter lists models with free variants in its model catalogue.
 
-2. **Get Your Free API Key**:
-   Create a free account and generate an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
+1. Visit [OpenRouter's model catalogue](https://openrouter.ai/models?max_price=0).
+2. Check the model's current price, limits, and provider availability.
+3. Create an API key at [OpenRouter API Keys](https://openrouter.ai/keys).
+4. Select **OpenRouter** in Ghost AI and enter the key and exact model ID.
+5. Test the connection before using the model.
 
-3. **Configure Ghost AI**:
-   - In Ghost AI, click the **⚙ Settings** button in the header (or press `Ctrl+,`).
-   - Set **AI Provider** to **OpenRouter**.
-   - Paste your key into the **API Key** box (`sk-or-v1-...`).
-   - In the **Model** field, paste or type the model ID you chose (e.g., `meta-llama/llama-3.3-70b-instruct:free`).
-   - Click **Test** to verify connection, then click **Save**.
-   - You're ready to chat with AI directly in your floating stealth window!
+A model labelled free may still have rate limits, temporary unavailability, or account-specific restrictions. A key limit is not the same thing as free credits. Check the provider's billing page before using paid models.
 
----
-
-## ⌨️ Keyboard Shortcuts
+## ⌨️ Keyboard shortcuts
 
 | Shortcut | Action |
-| :--- | :--- |
-| `Enter` | Send message to AI |
-| `Shift + Enter` | Insert newline in message input |
-| `Ctrl + G` | Toggle Ghost Mode (Click-through) |
-| `Ctrl + N` | Start a new chat session |
-| `Ctrl + H` / `Escape` | Return to Home / Chats overview |
-| `Ctrl + ,` | Open Settings & API Key modal |
-| `Ctrl + Q` | Safely close Ghost AI |
+|---|---|
+| `Enter` | Send message |
+| `Shift + Enter` | Insert a newline |
+| `Ctrl + G` | Toggle Ghost Mode / click-through |
+| `Ctrl + N` | Start a new chat |
+| `Ctrl + H` or `Esc` | Return to Home / Chats |
+| `Ctrl + ,` | Open Settings |
+| `Ctrl + Q` | Close Ghost AI |
 
----
+## 🧱 Project structure
 
-## 🧱 Architecture & Technology Stack
-
-```
-ghost-ai/
+```text
+Ghost-AI/
 ├── ghost_ai/
-│   ├── __init__.py           # Package exports & version
-│   ├── ai_service.py         # Multi-provider streaming background worker (QThread)
-│   ├── chat_view.py          # Active conversation room & message bubbles
-│   ├── config.py             # Provider presets & atomic settings persistence
-│   ├── controls.py           # Independent HWND for Blue (Ghost) & Red (Close) micro-dots
-│   ├── history_view.py       # Responsive Grid & List chat history home page
-│   ├── macos_utils.py        # Native macOS Cocoa capture hiding & accessory policy
-│   ├── main_window.py        # Frameless main window container & routing
-│   ├── persistence.py        # Multi-chat storage & screen geometry validation
-│   ├── platform_utils.py     # Cross-platform Win32 / Cocoa dispatch
-│   └── win32_utils.py        # Native Win32 WS_EX_TRANSPARENT & WDA_EXCLUDEFROMCAPTURE
-├── tests/                    # 18 comprehensive automated unit tests
-├── GhostAI.vbs               # Silent Windows launcher
-├── requirements.txt          # Python requirements
-└── main.py                   # Application entrypoint
+│   ├── ai_service.py       # Provider requests and streamed AI responses
+│   ├── chat_view.py        # Chat interface and message bubbles
+│   ├── config.py           # Provider presets and configuration
+│   ├── controls.py         # Floating window controls
+│   ├── history_view.py     # Conversation history UI
+│   ├── macos_utils.py      # macOS-specific window behavior
+│   ├── main_window.py      # Main window and navigation
+│   ├── persistence.py      # Local conversation/settings persistence
+│   ├── platform_utils.py   # Platform-specific helpers
+│   └── win32_utils.py      # Windows-specific window behavior
+├── images/                 # Project screenshots and branding
+├── tests/                  # Automated tests
+├── GhostAI.vbs             # Optional Windows launcher
+├── main.py                 # Application entry point
+├── requirements.txt        # Python dependencies
+└── README.md
 ```
 
----
-
-## 🧪 Testing
-
-Run the test suite headless across Windows and macOS platforms:
+## 🧪 Run the tests
 
 ```bash
 python -m pytest tests -v
 ```
 
-All 18 tests cover:
-- Persistence, atomic writing, and corrupt file recovery
-- Configuration management and provider presets
-- Background streaming payload formatting (OpenAI & Anthropic formats)
-- HWND separation and taskbar exclusion
-- Win32 click-through and screen capture exclusion
+Tests and platform-specific behavior may differ across operating systems. Run the suite on the platforms you intend to support before publishing a release.
 
----
+## 🔐 Privacy and security
+
+- API keys are configured locally through Ghost AI's settings.
+- Cloud AI providers receive the requests you send them; review their data handling policies.
+- Never commit API keys, tokens, personal data, or local configuration files to the repository.
+- Use local inference if you need prompts to remain on your own machine, and verify that the configured endpoint is actually local.
+- Screen-capture exclusion is an OS feature with limitations; it cannot guarantee invisibility to every recording, capture, or monitoring tool.
+
+## 🛠️ Troubleshooting
+
+**The API test fails**
+- Verify the provider, API key, endpoint, and exact model ID.
+- Check whether the model is available to your account and whether you have quota or credits.
+- Read the full provider error. HTTP `401` usually indicates authentication trouble; HTTP `429` can indicate rate limits or quota/billing limits.
+
+**A free model stops responding**
+- Check the provider's current free-tier limits and model availability.
+- Try another currently available free model.
+- Avoid assuming a `:free` model ID will remain available indefinitely.
+
+**Ghost AI does not launch**
+- Activate the virtual environment and reinstall requirements.
+- Run `python main.py` from the project directory to see startup errors.
+- Check the supported Python and OS versions.
+
+## 🤝 Contributing
+
+Issues, bug reports, ideas, and pull requests are welcome. When reporting a bug, include your OS, Python version, provider/model (never the API key), steps to reproduce, and the relevant error message.
 
 ## 📄 License
 
-Licensed under the **Apache License, Version 2.0**. See the [LICENSE](LICENSE) file for details.
+Ghost AI is licensed under the [Apache License 2.0](LICENSE).
+
+---
+
+<div align="center">
+
+**Ghost AI** · Your workspace, with a little more room to think. 👻
+
+</div>
