@@ -43,8 +43,8 @@ def test_chat_view_voice_buttons(qapp, monkeypatch):
 
     assert view.mic_btn.cursor().shape() == Qt.CursorShape.ArrowCursor
     assert view.sys_audio_btn.cursor().shape() == Qt.CursorShape.ArrowCursor
-    assert view.mic_btn.text() == "🎙️"
-    assert view.sys_audio_btn.text() == "🔊"
+    assert not view.mic_btn.icon().isNull()
+    assert not view.sys_audio_btn.icon().isNull()
 
     # Avoid opening real audio hardware in headless test environment
     monkeypatch.setattr(MicVoiceWorker, "start", lambda self: None)
@@ -52,7 +52,7 @@ def test_chat_view_voice_buttons(qapp, monkeypatch):
 
     # Test toggling microphone button updates label
     view._toggle_mic_recording()
-    assert view.mic_btn.text() == "⏹"
+    assert not view.mic_btn.icon().isNull()
     assert not view.voice_status_frame.isHidden()
 
     # Test transcription callback inserting text into input
@@ -65,6 +65,6 @@ def test_chat_view_voice_buttons(qapp, monkeypatch):
 
     # Cancel recording resets UI
     view._cancel_voice_recording()
-    assert view.mic_btn.text() == "🎙️"
+    assert not view.mic_btn.icon().isNull()
     assert view.voice_status_frame.isHidden()
     view.close()

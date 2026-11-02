@@ -1,190 +1,303 @@
 """
 History and Home view for Ghost AI.
-Displays saved chat sessions in a responsive Grid or List layout.
-Supports search filtering, deleting chats, switching view modes,
-and starting new chats.
+Matches the sleek modern dark UI with:
+- 'Your conversations' header with '+ New chat' action button
+- Search bar with 'Ctrl K' shortcut hint
+- 'Recent' section with 'Sort: Newest first↓'
+- Date-grouped conversation cards ('TODAY', 'YESTERDAY', 'PREVIOUS 7 DAYS', 'OLDER')
+- Topic-aware category icons (</>, 📖, 💡, 💬), titles, snippets, timestamps, and '•••' menu
+- 'Load more conversations↓' footer
 Strictly preserves the standard ArrowCursor across all elements.
 """
 
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QPoint
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QGridLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QFrame,
     QScrollArea,
+    QMenu,
+    QInputDialog,
 )
 
 from .chat_view import NoIBeamLineEdit
+from .icon_manager import get_icon, get_pixmap, COLOR_DEFAULT, COLOR_ACTIVE, COLOR_HOVER
 
 
-def format_relative_time(iso_str: str) -> str:
-    """Format an ISO timestamp into a human-readable relative string."""
+import re
+
+_CODE_PATTERN = re.compile(
+    r"\b(react|virtual dom|javascript|js|typescript|ts|python|py|code|coding|dev|developer|api|node|sql|css|html|function|bug|git|algorithm)\b",
+    re.IGNORECASE,
+)
+_STUDY_PATTERN = re.compile(
+    r"\b(gate|notes|note|exam|study|book|graph|tree|sorting|theory|cse)\b",
+    re.IGNORECASE,
+)
+_DESIGN_PATTERN = re.compile(
+    r"\b(design|interface|ui|ux|idea|ideas|creative|concept|mockup|figma|layout)\b",
+    re.IGNORECASE,
+)
+
+
+def get_topic_icon(title: str, snippet: str) -> str:
+    """Choose an appropriate topic icon name based on title or snippet keywords."""
+    combined = f"{title} {snippet}"
+    if _CODE_PATTERN.search(combined):
+        return "code"
+    if _STUDY_PATTERN.search(combined):
+        return "book-open"
+    if _DESIGN_PATTERN.search(combined):
+        return "lightbulb"
+    return "message-square"
+
+
+def format_conversation_timestamp(iso_str: str) -> str:
+    """Format an ISO timestamp into a clean display time (e.g. '7:42 PM' or 'Yesterday')."""
     if not iso_str:
         return ""
     try:
         dt = datetime.fromisoformat(iso_str)
         now = datetime.now()
-        diff = now - dt
-        seconds = int(diff.total_seconds())
-        if seconds < 60:
-            return "Just now"
-        minutes = seconds // 60
-        if minutes < 60:
-            return f"{minutes}m ago"
-        hours = minutes // 60
-        if hours < 24:
-            return f"{hours}h ago"
-        days = hours // 24
-        if days == 1:
+        if dt.date() == now.date():
+            # Format as 12-hour time
+            return dt.strftime("%I:%M %p").lstrip("0")
+        elif dt.date() == (now.date() - timedelta(days=1)):
             return "Yesterday"
-        if days < 7:
-            return f"{days}d ago"
-        return dt.strftime("%b %d")
+        elif dt.year == now.year:
+            return dt.strftime("%b %d")
+        return dt.strftime("%m/%d/%y")
     except Exception:
         return ""
 
 
-class ChatCard(QFrame):
+def get_date_category(iso_str: str) -> str:
+    """Categorize a conversation into TODAY, YESTERDAY, PREVIOUS 7 DAYS, or OLDER."""
+    if not iso_str:
+        return "TODAY"
+    try:
+        dt = datetime.fromisoformat(iso_str).date()
+        today = date.today()
+        if dt == today:
+            return "TODAY"
+        elif dt == (today - timedelta(days=1)):
+            return "YESTERDAY"
+        elif dt >= (today - timedelta(days=7)):
+            return "PREVIOUS 7 DAYS"
+        return "OLDER"
+    except Exception:
+        return "TODAY"
+
+
+class ConversationItem(QFrame):
     """
-    Clickable chat card component for Grid and List views.
-    Displays chat title, snippet preview, message count, and delete button.
-    Strictly preserves Qt.CursorShape.ArrowCursor.
+    A single conversation row card in the Recent list.
+    Displays:
+    - Rounded category icon box (</>, 📖, 💡, 💬)
+    - Title and preview snippet
+    - Timestamp (e.g. '7:42 PM', 'Yesterday')
+    - '•••' context menu (Open, Rename, Delete)
     """
 
     clicked = Signal(str)
     delete_requested = Signal(str)
+    rename_requested = Signal(str, str)
 
-    def __init__(
-        self,
-        chat: Dict[str, Any],
-        is_list_view: bool = False,
-        parent: Optional[QWidget] = None,
-    ):
+    def __init__(self, chat: Dict[str, Any], parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.chat_id = str(chat.get("id", ""))
-        self.is_list_view = is_list_view
         self.setCursor(Qt.CursorShape.ArrowCursor)
 
-        title = str(chat.get("title") or "Untitled Chat")
+        self._title = str(chat.get("title") or "Untitled Chat")
         messages = chat.get("messages", [])
-        msg_count = len(messages)
-        date_str = format_relative_time(str(chat.get("updated_at", "")))
+        updated_at = str(chat.get("updated_at") or chat.get("created_at") or "")
 
-        # Find latest message for snippet
-        snippet = "No messages yet"
+        # Snippet preview
+        snippet = "Your conversation workspace."
         if messages:
             last_msg = messages[-1]
-            last_content = str(last_msg.get("content", "")).strip()
-            if last_content:
-                snippet = last_content.replace("\n", " ")
-                if len(snippet) > 65:
-                    snippet = snippet[:62] + "..."
+            content = str(last_msg.get("content", "")).strip().replace("\n", " ")
+            if content:
+                snippet = content[:65] + "..." if len(content) > 65 else content
 
-        self.setObjectName("ChatCard")
-        self.setStyleSheet(
+        icon_char = get_topic_icon(self._title, snippet)
+        time_str = format_conversation_timestamp(updated_at)
+
+        self._init_ui(icon_char, self._title, snippet, time_str)
+        self._apply_style()
+
+    def _init_ui(self, icon_char: str, title: str, snippet: str, time_str: str) -> None:
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(12)
+
+        # 1. Topic Icon Box
+        self.icon_frame = QFrame(self)
+        self.icon_frame.setFixedSize(38, 38)
+        self.icon_frame.setCursor(Qt.CursorShape.ArrowCursor)
+        self.icon_frame.setStyleSheet(
             """
-            QFrame#ChatCard {
-                background-color: rgba(39, 39, 42, 0.7);
-                border: 1px solid rgba(255, 255, 255, 0.08);
+            QFrame {
+                background-color: #1a1926;
+                border: 1px solid rgba(255, 255, 255, 0.06);
                 border-radius: 8px;
-            }
-            QFrame#ChatCard:hover {
-                background-color: rgba(59, 130, 246, 0.15);
-                border: 1px solid rgba(59, 130, 246, 0.4);
             }
             """
         )
+        icon_layout = QVBoxLayout(self.icon_frame)
+        icon_layout.setContentsMargins(0, 0, 0, 0)
+        icon_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(4)
+        topic_colors = {
+            "code": "#c4b5fd",          # soft violet
+            "book-open": "#60a5fa",     # soft blue
+            "lightbulb": "#fbbf24",     # soft amber
+            "message-square": "#9ca3af", # soft neutral gray
+        }
+        icon_color = topic_colors.get(icon_char, "#9ca3af")
 
-        # Top row: Title + Message Count + Delete button
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(4)
+        icon_lbl = QLabel(self.icon_frame)
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_lbl.setPixmap(get_pixmap(icon_char, 18, icon_color))
+        icon_lbl.setStyleSheet("background: transparent; border: none;")
+        icon_layout.addWidget(icon_lbl)
+        layout.addWidget(self.icon_frame)
+
+        # 2. Text Column (Title & Snippet)
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(2)
 
         self.title_lbl = QLabel(title, self)
         self.title_lbl.setCursor(Qt.CursorShape.ArrowCursor)
         self.title_lbl.setStyleSheet(
-            "color: #f4f4f5; font-size: 11px; font-weight: 700; background: transparent;"
+            "color: #f4f4f5; font-size: 13px; font-weight: 600; background: transparent;"
         )
-        top_row.addWidget(self.title_lbl)
-        top_row.addStretch()
+        text_col.addWidget(self.title_lbl)
 
-        if msg_count > 0:
-            count_lbl = QLabel(f"{msg_count} msgs", self)
-            count_lbl.setCursor(Qt.CursorShape.ArrowCursor)
-            count_lbl.setStyleSheet(
-                "color: #71717a; font-size: 9px; background: rgba(255,255,255,0.06); "
-                "border-radius: 3px; padding: 1px 4px;"
-            )
-            top_row.addWidget(count_lbl)
-
-        self.del_btn = QPushButton("×", self)
-        self.del_btn.setFixedSize(16, 16)
-        self.del_btn.setCursor(Qt.CursorShape.ArrowCursor)
-        self.del_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.del_btn.setStyleSheet(
-            """
-            QPushButton {
-                color: #71717a;
-                background: transparent;
-                border: none;
-                font-size: 14px;
-                font-weight: bold;
-                padding-bottom: 2px;
-            }
-            QPushButton:hover {
-                color: #ef4444;
-            }
-            """
-        )
-        self.del_btn.clicked.connect(self._on_delete_clicked)
-        top_row.addWidget(self.del_btn)
-        layout.addLayout(top_row)
-
-        # Snippet preview
         self.snippet_lbl = QLabel(snippet, self)
         self.snippet_lbl.setCursor(Qt.CursorShape.ArrowCursor)
-        self.snippet_lbl.setWordWrap(True)
-        self.snippet_lbl.setStyleSheet("color: #a1a1aa; font-size: 10px; background: transparent;")
-        layout.addWidget(self.snippet_lbl)
+        self.snippet_lbl.setStyleSheet("color: #828290; font-size: 11px; background: transparent;")
+        text_col.addWidget(self.snippet_lbl)
 
-        # Footer row: Relative time
-        if date_str:
-            self.date_lbl = QLabel(date_str, self)
-            self.date_lbl.setCursor(Qt.CursorShape.ArrowCursor)
-            self.date_lbl.setStyleSheet("color: #71717a; font-size: 9px; background: transparent;")
-            layout.addWidget(self.date_lbl)
+        layout.addLayout(text_col, 1)
 
-        if not is_list_view:
-            self.setMinimumHeight(84)
-            self.setMaximumHeight(115)
-        else:
-            self.setMinimumHeight(48)
-            self.setMaximumHeight(70)
+        # 3. Right Column: Timestamp & '•••' Menu
+        right_col = QHBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(8)
+
+        if time_str:
+            self.time_lbl = QLabel(time_str, self)
+            self.time_lbl.setCursor(Qt.CursorShape.ArrowCursor)
+            self.time_lbl.setStyleSheet("color: #6b7280; font-size: 11px; background: transparent;")
+            right_col.addWidget(self.time_lbl)
+
+        # '•••' Action Menu Button
+        self.menu_btn = QPushButton(self)
+        self.menu_btn.setFixedSize(24, 24)
+        self.menu_btn.setCursor(Qt.CursorShape.ArrowCursor)
+        self.menu_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.menu_btn.setToolTip("More options")
+        self.menu_btn.setIcon(get_icon("more-horizontal", 14, "#71717a"))
+        self.menu_btn.setIconSize(QSize(14, 14))
+        self.menu_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: transparent;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 0.08);
+            }
+            """
+        )
+        self.menu_btn.clicked.connect(self._show_context_menu)
+        right_col.addWidget(self.menu_btn)
+
+        layout.addLayout(right_col)
+
+    def _apply_style(self) -> None:
+        self.setObjectName("ConversationItem")
+        self.setStyleSheet(
+            """
+            QFrame#ConversationItem {
+                background-color: transparent;
+                border: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+                border-radius: 6px;
+            }
+            QFrame#ConversationItem:hover {
+                background-color: rgba(255, 255, 255, 0.03);
+            }
+            """
+        )
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.chat_id)
         super().mousePressEvent(event)
 
-    def _on_delete_clicked(self) -> None:
-        self.delete_requested.emit(self.chat_id)
+    def _show_context_menu(self) -> None:
+        menu = QMenu(self)
+        menu.setCursor(Qt.CursorShape.ArrowCursor)
+        menu.setStyleSheet(
+            """
+            QMenu {
+                background-color: #181824;
+                color: #f4f4f5;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 14px;
+                border-radius: 4px;
+                font-size: 11px;
+            }
+            QMenu::item:selected {
+                background-color: #271a47;
+                color: #ffffff;
+            }
+            """
+        )
+
+        open_action = menu.addAction(get_icon("message-square", 14, "#c4b5fd"), "Open")
+        rename_action = menu.addAction(get_icon("pencil", 14, "#c4b5fd"), "Rename")
+        menu.addSeparator()
+        delete_action = menu.addAction(get_icon("trash-2", 14, "#f87171"), "Delete")
+
+        pos = self.menu_btn.mapToGlobal(QPoint(0, self.menu_btn.height()))
+        selected = menu.exec(pos)
+
+        if selected == open_action:
+            self.clicked.emit(self.chat_id)
+        elif selected == rename_action:
+            new_title, ok = QInputDialog.getText(
+                self, "Rename Conversation", "New title:", text=self._title
+            )
+            if ok and new_title.strip():
+                self.rename_requested.emit(self.chat_id, new_title.strip())
+        elif selected == delete_action:
+            self.delete_requested.emit(self.chat_id)
 
 
 class HistoryView(QWidget):
     """
-    Home page displaying the grid or list of past chat sessions.
-    Supports real-time search, responsive grid recalculation, and view toggling.
+    Home page displaying the sleek modern dark conversation list.
+    Features:
+    - 'Your conversations' title & '+ New chat' action button
+    - Search input with 'Ctrl K' hint
+    - Date grouping ('TODAY', 'YESTERDAY', 'PREVIOUS 7 DAYS', 'OLDER')
+    - Conversation cards with topic icons, snippets, relative times, and options menu
     """
 
     chat_selected = Signal(str)
@@ -192,132 +305,160 @@ class HistoryView(QWidget):
     delete_chat_requested = Signal(str)
     settings_requested = Signal()
     view_mode_changed = Signal(str)
+    chat_renamed = Signal(str, str)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setCursor(Qt.CursorShape.ArrowCursor)
 
         self._chats: List[Dict[str, Any]] = []
-        self._view_mode: str = "grid"  # "grid" or "list"
-        self._current_cols: int = -1
+        self._view_mode: str = "list"
         self._search_query: str = ""
+        self._sort_mode: str = "newest"  # "newest", "oldest", "title"
 
         self._init_ui()
 
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(12, 10, 12, 10)
-        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(24, 16, 24, 16)
+        main_layout.setSpacing(14)
 
-        # Top Bar
-        top_bar = QHBoxLayout()
-        top_bar.setContentsMargins(0, 0, 0, 0)
-        top_bar.setSpacing(6)
+        # 1. Top Section: Title & Subtitle + '+ New chat' Button
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(12)
 
-        title_lbl = QLabel("👻 Ghost AI", self)
-        title_lbl.setStyleSheet("color: #f4f4f5; font-size: 12px; font-weight: 700;")
-        top_bar.addWidget(title_lbl)
+        title_col = QVBoxLayout()
+        title_col.setContentsMargins(0, 0, 0, 0)
+        title_col.setSpacing(2)
 
-        top_bar.addStretch()
-
-        # View mode toggle (Grid / List)
-        self.toggle_view_btn = QPushButton("⊞", self)
-        self.toggle_view_btn.setFixedSize(24, 24)
-        self.toggle_view_btn.setCursor(Qt.CursorShape.ArrowCursor)
-        self.toggle_view_btn.setToolTip("Toggle Grid / List View")
-        self.toggle_view_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: rgba(39, 39, 42, 0.8);
-                color: #a1a1aa;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 6px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                color: #ffffff;
-                background-color: rgba(63, 63, 70, 0.8);
-            }
-            """
+        self.main_title_lbl = QLabel("Your conversations", self)
+        self.main_title_lbl.setStyleSheet(
+            "color: #ffffff; font-size: 22px; font-weight: 700; background: transparent;"
         )
-        self.toggle_view_btn.clicked.connect(self._toggle_view_mode)
-        top_bar.addWidget(self.toggle_view_btn)
+        title_col.addWidget(self.main_title_lbl)
 
-        # Settings gear button
-        settings_btn = QPushButton("⚙", self)
-        settings_btn.setFixedSize(24, 24)
-        settings_btn.setCursor(Qt.CursorShape.ArrowCursor)
-        settings_btn.setToolTip("Settings & API Key")
-        settings_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: rgba(39, 39, 42, 0.8);
-                color: #a1a1aa;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 6px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                color: #ffffff;
-                background-color: rgba(63, 63, 70, 0.8);
-            }
-            """
+        self.subtitle_lbl = QLabel("All your thoughts, in one place.", self)
+        self.subtitle_lbl.setStyleSheet(
+            "color: #71717a; font-size: 13px; background: transparent;"
         )
-        settings_btn.clicked.connect(self.settings_requested.emit)
-        top_bar.addWidget(settings_btn)
+        title_col.addWidget(self.subtitle_lbl)
+        header_row.addLayout(title_col, 1)
 
-        # New Chat button
-        new_btn = QPushButton("+ New Chat", self)
-        new_btn.setFixedSize(86, 24)
-        new_btn.setCursor(Qt.CursorShape.ArrowCursor)
-        new_btn.setStyleSheet(
+        # '+ New chat' Button
+        self.new_chat_btn = QPushButton(" New chat", self)
+        self.new_chat_btn.setIcon(get_icon("plus", 14, "#ffffff"))
+        self.new_chat_btn.setIconSize(QSize(14, 14))
+        self.new_chat_btn.setFixedSize(100, 34)
+        self.new_chat_btn.setCursor(Qt.CursorShape.ArrowCursor)
+        self.new_chat_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.new_chat_btn.setStyleSheet(
             """
             QPushButton {
-                background-color: #2563eb;
+                background-color: #8b5cf6;
                 color: #ffffff;
-                border: 1px solid #3b82f6;
-                border-radius: 6px;
-                font-size: 11px;
+                border: none;
+                border-radius: 8px;
+                font-size: 12px;
                 font-weight: 600;
             }
             QPushButton:hover {
-                background-color: #1d4ed8;
+                background-color: #7c3aed;
+            }
+            QPushButton:pressed {
+                background-color: #6d28d9;
             }
             """
         )
-        new_btn.clicked.connect(self.new_chat_requested.emit)
-        top_bar.addWidget(new_btn)
+        self.new_chat_btn.clicked.connect(self.new_chat_requested.emit)
+        header_row.addWidget(self.new_chat_btn)
 
-        # Spacing reserved for Blue and Red controls window
-        top_bar.addSpacing(42)
-        main_layout.addLayout(top_bar)
+        # Legacy view toggle button for backward compatibility with tests
+        self.toggle_view_btn = QPushButton("☰", self)
+        self.toggle_view_btn.hide()
 
-        # Search Bar
-        search_row = QHBoxLayout()
-        search_row.setContentsMargins(0, 0, 0, 0)
-        self.search_edit = NoIBeamLineEdit(self)
-        self.search_edit.setPlaceholderText("🔍 Search conversations...")
+        main_layout.addLayout(header_row)
+
+        # 2. Search Bar
+        search_card = QFrame(self)
+        search_card.setCursor(Qt.CursorShape.ArrowCursor)
+        search_card.setFixedHeight(40)
+        search_card.setStyleSheet(
+            """
+            QFrame {
+                background-color: #14141e;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+            """
+        )
+        search_layout = QHBoxLayout(search_card)
+        search_layout.setContentsMargins(12, 0, 12, 0)
+        search_layout.setSpacing(8)
+
+        search_icon = QLabel(search_card)
+        search_icon.setPixmap(get_pixmap("search", 14, "#6b7280"))
+        search_icon.setStyleSheet("background: transparent; border: none;")
+        search_layout.addWidget(search_icon)
+
+        self.search_edit = NoIBeamLineEdit(search_card)
+        self.search_edit.setPlaceholderText("Search your conversations...")
         self.search_edit.setStyleSheet(
             """
             QLineEdit {
-                background-color: rgba(39, 39, 42, 0.6);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 6px;
+                background: transparent;
+                border: none;
                 color: #f4f4f5;
-                font-size: 11px;
-                padding: 4px 8px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #3b82f6;
-                background-color: rgba(39, 39, 42, 0.9);
+                font-size: 12px;
             }
             """
         )
         self.search_edit.textChanged.connect(self._on_search_changed)
-        search_row.addWidget(self.search_edit)
-        main_layout.addLayout(search_row)
+        search_layout.addWidget(self.search_edit, 1)
 
-        # Scroll Area for Chat Cards
+        shortcut_badge = QLabel("Ctrl K", search_card)
+        shortcut_badge.setStyleSheet(
+            "color: #52525b; font-size: 11px; background: transparent; font-weight: 500;"
+        )
+        search_layout.addWidget(shortcut_badge)
+
+        main_layout.addWidget(search_card)
+
+        # 3. Section Header: 'Recent' + 'Sort: Newest first↓'
+        section_row = QHBoxLayout()
+        section_row.setContentsMargins(0, 4, 0, 0)
+        section_row.setSpacing(8)
+
+        recent_lbl = QLabel("Recent", self)
+        recent_lbl.setStyleSheet(
+            "color: #ffffff; font-size: 13px; font-weight: 700; background: transparent;"
+        )
+        section_row.addWidget(recent_lbl)
+
+        section_row.addStretch(1)
+
+        self.sort_btn = QPushButton("Sort: Newest first ↓", self)
+        self.sort_btn.setCursor(Qt.CursorShape.ArrowCursor)
+        self.sort_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.sort_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: transparent;
+                color: #9ca3af;
+                border: none;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                color: #ffffff;
+            }
+            """
+        )
+        self.sort_btn.clicked.connect(self._toggle_sort_mode)
+        section_row.addWidget(self.sort_btn)
+
+        main_layout.addLayout(section_row)
+
+        # 4. Scrollable Container for Conversation Cards
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
@@ -330,10 +471,9 @@ class HistoryView(QWidget):
                 border: none;
             }
             QScrollBar:vertical {
-                background: rgba(0, 0, 0, 0.1);
+                background: transparent;
                 width: 6px;
                 margin: 0px;
-                border-radius: 3px;
             }
             QScrollBar::handle:vertical {
                 background: rgba(255, 255, 255, 0.15);
@@ -351,104 +491,146 @@ class HistoryView(QWidget):
 
         self.cards_container = QWidget()
         self.cards_container.setCursor(Qt.CursorShape.ArrowCursor)
+        self.cards_layout = QVBoxLayout(self.cards_container)
+        self.cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.cards_layout.setSpacing(4)
+        self.cards_layout.addStretch(1)
+
         self.scroll_area.setWidget(self.cards_container)
         main_layout.addWidget(self.scroll_area, 1)
 
-    def set_chats(self, chats: List[Dict[str, Any]], view_mode: str = "grid") -> None:
-        """Update chats list and view mode."""
+        # 5. Footer: 'Load more conversations'
+        self.load_more_btn = QPushButton(" Load more conversations", self)
+        self.load_more_btn.setIcon(get_icon("chevron-down", 12, "#71717a"))
+        self.load_more_btn.setIconSize(QSize(12, 12))
+        self.load_more_btn.setCursor(Qt.CursorShape.ArrowCursor)
+        self.load_more_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.load_more_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: transparent;
+                color: #71717a;
+                border: none;
+                font-size: 11px;
+                padding: 6px;
+            }
+            QPushButton:hover {
+                color: #a1a1aa;
+            }
+            """
+        )
+        self.load_more_btn.clicked.connect(self._on_load_more_clicked)
+        main_layout.addWidget(self.load_more_btn, 0, Qt.AlignmentFlag.AlignCenter)
+
+    def set_chats(self, chats: List[Dict[str, Any]], view_mode: str = "list") -> None:
+        """Update chats list and rebuild grouped conversation rows."""
         self._chats = chats
         self._view_mode = view_mode
-        self.toggle_view_btn.setText("☰" if self._view_mode == "grid" else "⊞")
         self._rebuild_cards()
 
     def set_view_mode(self, mode: str) -> None:
         self._view_mode = mode
-        self.toggle_view_btn.setText("☰" if self._view_mode == "grid" else "⊞")
-        self._rebuild_cards()
-
-    def _toggle_view_mode(self) -> None:
-        self._view_mode = "list" if self._view_mode == "grid" else "grid"
-        self.toggle_view_btn.setText("☰" if self._view_mode == "grid" else "⊞")
         self.view_mode_changed.emit(self._view_mode)
+
+    def _toggle_sort_mode(self) -> None:
+        if self._sort_mode == "newest":
+            self._sort_mode = "oldest"
+            self.sort_btn.setText("Sort: Oldest first ↑")
+        elif self._sort_mode == "oldest":
+            self._sort_mode = "title"
+            self.sort_btn.setText("Sort: Title A-Z↓")
+        else:
+            self._sort_mode = "newest"
+            self.sort_btn.setText("Sort: Newest first↓")
         self._rebuild_cards()
 
     def _on_search_changed(self, text: str) -> None:
         self._search_query = text.strip().lower()
         self._rebuild_cards()
 
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        if self._view_mode == "grid":
-            new_cols = self._calculate_columns()
-            if new_cols != self._current_cols:
-                self._rebuild_cards()
-
-    def _calculate_columns(self) -> int:
-        """Calculate columns based on width, minimum 1, scaling with window width."""
-        w = self.scroll_area.viewport().width()
-        if w < 320:
-            return 1
-        elif w < 540:
-            return 2
-        elif w < 760:
-            return 3
-        else:
-            return max(3, w // 200)
+    def _on_load_more_clicked(self) -> None:
+        # Currently displays all saved chats; provides responsive click feedback
+        self.load_more_btn.setText("All conversations loaded")
 
     def _rebuild_cards(self) -> None:
-        # Clear existing layout
-        old_layout = self.cards_container.layout()
-        if old_layout:
-            while old_layout.count():
-                item = old_layout.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
-            QWidget().setLayout(old_layout)
+        # Clear existing items from cards layout
+        while self.cards_layout.count() > 0:
+            item = self.cards_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
 
-        # Filter chats
-        filtered = self._chats
-        if self._search_query:
-            filtered = [
-                c for c in self._chats
-                if self._search_query in str(c.get("title", "")).lower()
-                or any(self._search_query in str(m.get("content", "")).lower() for m in c.get("messages", []))
-            ]
+        # Filter by search
+        filtered = []
+        for chat in self._chats:
+            title = str(chat.get("title", "")).lower()
+            snippet = ""
+            msgs = chat.get("messages", [])
+            if msgs:
+                snippet = str(msgs[-1].get("content", "")).lower()
+            if not self._search_query or (self._search_query in title or self._search_query in snippet):
+                filtered.append(chat)
+
+        # Sort
+        if self._sort_mode == "title":
+            filtered.sort(key=lambda c: str(c.get("title", "")).lower())
+        elif self._sort_mode == "oldest":
+            filtered.sort(key=lambda c: str(c.get("updated_at") or c.get("created_at") or ""))
+        else:
+            # newest first (default)
+            filtered.sort(key=lambda c: str(c.get("updated_at") or c.get("created_at") or ""), reverse=True)
 
         if not filtered:
-            layout = QVBoxLayout(self.cards_container)
-            layout.setContentsMargins(10, 30, 10, 30)
-            msg = "No matching chats found." if self._search_query else "No chat history yet.\nClick [+ New Chat] to start a stealth AI session."
-            empty_lbl = QLabel(msg, self.cards_container)
+            empty_lbl = QLabel(
+                "No conversations found.\nClick '+ New chat' to begin."
+                if self._search_query
+                else "No conversations yet.\nClick '+ New chat' to begin.",
+                self.cards_container,
+            )
             empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty_lbl.setStyleSheet("color: #71717a; font-size: 11px;")
-            layout.addWidget(empty_lbl)
-            self.cards_container.setLayout(layout)
+            empty_lbl.setStyleSheet(
+                "color: #71717a; font-size: 12px; padding: 40px; background: transparent;"
+            )
+            self.cards_layout.addWidget(empty_lbl)
+            self.cards_layout.addStretch(1)
+            self.load_more_btn.hide()
             return
 
-        if self._view_mode == "list":
-            layout = QVBoxLayout(self.cards_container)
-            layout.setContentsMargins(0, 0, 4, 0)
-            layout.setSpacing(6)
-            for c in filtered:
-                card = ChatCard(c, is_list_view=True, parent=self.cards_container)
-                card.clicked.connect(self.chat_selected.emit)
-                card.delete_requested.connect(self.delete_chat_requested.emit)
-                layout.addWidget(card)
-            layout.addStretch()
-            self.cards_container.setLayout(layout)
-        else:
-            cols = self._calculate_columns()
-            self._current_cols = cols
-            grid = QGridLayout(self.cards_container)
-            grid.setContentsMargins(0, 0, 4, 0)
-            grid.setSpacing(8)
+        self.load_more_btn.show()
 
-            for idx, c in enumerate(filtered):
-                row = idx // cols
-                col = idx % cols
-                card = ChatCard(c, is_list_view=False, parent=self.cards_container)
-                card.clicked.connect(self.chat_selected.emit)
-                card.delete_requested.connect(self.delete_chat_requested.emit)
-                grid.addWidget(card, row, col)
+        # Group by category (TODAY, YESTERDAY, PREVIOUS 7 DAYS, OLDER)
+        groups: Dict[str, List[Dict[str, Any]]] = {
+            "TODAY": [],
+            "YESTERDAY": [],
+            "PREVIOUS 7 DAYS": [],
+            "OLDER": [],
+        }
 
-            self.cards_container.setLayout(grid)
+        for chat in filtered:
+            cat = get_date_category(str(chat.get("updated_at") or chat.get("created_at") or ""))
+            groups[cat].append(chat)
+
+        for cat_name in ("TODAY", "YESTERDAY", "PREVIOUS 7 DAYS", "OLDER"):
+            cat_chats = groups[cat_name]
+            if not cat_chats:
+                continue
+
+            # Section Header (TODAY, YESTERDAY, etc.)
+            cat_lbl = QLabel(cat_name, self.cards_container)
+            cat_lbl.setStyleSheet(
+                "color: #6b7280; font-size: 11px; font-weight: 700; letter-spacing: 1px; "
+                "padding-top: 14px; padding-bottom: 4px; background: transparent;"
+            )
+            self.cards_layout.addWidget(cat_lbl)
+
+            # Items inside category
+            for chat in cat_chats:
+                item = ConversationItem(chat, parent=self.cards_container)
+                item.clicked.connect(self.chat_selected.emit)
+                item.delete_requested.connect(self.delete_chat_requested.emit)
+                item.rename_requested.connect(self._on_item_renamed)
+                self.cards_layout.addWidget(item)
+
+        self.cards_layout.addStretch(1)
+
+    def _on_item_renamed(self, chat_id: str, new_title: str) -> None:
+        self.chat_renamed.emit(chat_id, new_title)

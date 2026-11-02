@@ -101,3 +101,60 @@ def test_markdown_bubble_rendering(qapp):
     assert ('font-weight:700;">QueueFlow</span>' in html or '<strong>QueueFlow</strong>' in html or '<b>QueueFlow</b>' in html)
     assert "Item 1</li>" in html
 
+
+def test_header_bar_and_tabs(qapp):
+    """Test unified header bar, tabs synchronization, and stealth cursor."""
+    win = MainWindow()
+    win.show_app()
+    qapp.processEvents()
+
+    # Header bar exists and preserves arrow cursor
+    assert hasattr(win, "header_bar")
+    assert win.header_bar.cursor().shape() == Qt.CursorShape.ArrowCursor
+    assert win.header_bar.home_btn.cursor().shape() == Qt.CursorShape.ArrowCursor
+    assert win.header_bar.new_tab_btn.cursor().shape() == Qt.CursorShape.ArrowCursor
+    assert win.header_bar.settings_btn.cursor().shape() == Qt.CursorShape.ArrowCursor
+
+    # Create chats and verify tabs are added
+    win.create_new_chat()
+    qapp.processEvents()
+    assert len(win._open_tabs) >= 1
+    active_id = win._active_chat_id
+    assert active_id in win.header_bar._tabs
+
+    # Test closing tab
+    win.close_tab(active_id)
+    qapp.processEvents()
+    assert active_id not in win._open_tabs
+
+    win.close_application()
+
+
+def test_history_view_modern_components(qapp):
+    """Test modern history view features: '+ New chat', search, and topic icons."""
+    from ghost_ai.history_view import get_topic_icon, get_date_category
+    from datetime import datetime, timedelta
+
+    # Topic icon helper
+    assert get_topic_icon("Understanding React Virtual DOM", "Fiber and reconciliation") == "code"
+    assert get_topic_icon("GATE CSE — Graph Algorithms", "BFS, DFS and Dijkstra") == "book-open"
+    assert get_topic_icon("Ghost AI Interface Design", "Unified header mockup") == "lightbulb"
+    assert get_topic_icon("Random Chit Chat", "Hello how are you") == "message-square"
+
+    # Date categorization helper
+    now_iso = datetime.now().isoformat()
+    yesterday_iso = (datetime.now() - timedelta(days=1)).isoformat()
+    assert get_date_category(now_iso) == "TODAY"
+    assert get_date_category(yesterday_iso) == "YESTERDAY"
+
+    win = MainWindow()
+    win.show_app()
+    qapp.processEvents()
+
+    assert win.history_view.new_chat_btn.cursor().shape() == Qt.CursorShape.ArrowCursor
+    assert win.history_view.sort_btn.cursor().shape() == Qt.CursorShape.ArrowCursor
+    assert win.history_view.load_more_btn.cursor().shape() == Qt.CursorShape.ArrowCursor
+
+    win.close_application()
+
+

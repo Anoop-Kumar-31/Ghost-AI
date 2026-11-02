@@ -14,5 +14,6 @@ def qapp():
 def isolate_persistence(tmp_path, monkeypatch):
     """Ensure tests run against an isolated temporary data file instead of user data."""
     test_file = tmp_path / "chats.json"
-    from ghost_ai import persistence
+    from ghost_ai import persistence, config
     monkeypatch.setattr(persistence, "get_default_storage_path", lambda: test_file)
+    monkeypatch.setattr(config, "get_default_config_path", lambda: tmp_path / "config.json")

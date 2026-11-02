@@ -106,11 +106,11 @@ def get_default_config_path() -> Path:
 def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
     """Load configuration from disk with fallback to defaults."""
     path = config_path or get_default_config_path()
-    if not path.is_file():
-        logger.info("Config file not found at %s. Using default config.", path)
-        return dict(DEFAULT_CONFIG)
-
     try:
+        if not path.is_file():
+            logger.info("Config file not found at %s. Using default config.", path)
+            return dict(DEFAULT_CONFIG)
+
         with open(path, "r", encoding="utf-8") as f:
             content = f.read().strip()
             if not content:

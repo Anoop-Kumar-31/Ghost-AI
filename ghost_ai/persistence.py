@@ -17,10 +17,10 @@ from PySide6.QtGui import QGuiApplication
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WIDTH = 420
-DEFAULT_HEIGHT = 560
-MIN_WIDTH = 320
-MIN_HEIGHT = 380
+DEFAULT_WIDTH = 700
+DEFAULT_HEIGHT = 700
+MIN_WIDTH = 360
+MIN_HEIGHT = 420
 
 DEFAULT_DATA: Dict[str, Any] = {
     "chats": [],
@@ -80,11 +80,11 @@ def load_data(storage_path: Optional[Path] = None) -> Dict[str, Any]:
     Never raises an exception or corrupts/deletes existing files.
     """
     path = storage_path or get_default_storage_path()
-    if not path.is_file():
-        logger.info("Storage file not found at %s. Using default state.", path)
-        return dict(DEFAULT_DATA)
-
     try:
+        if not path.is_file():
+            logger.info("Storage file not found at %s. Using default state.", path)
+            return dict(DEFAULT_DATA)
+
         with open(path, "r", encoding="utf-8") as f:
             content = f.read().strip()
             if not content:

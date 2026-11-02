@@ -1,6 +1,18 @@
 # Auto-detect text files and normalize line endings to LF
 * text=auto
 
+# Keep SVG assets consistent across platforms
+*.svg text eol=lf
+
+# Python source files
+*.py text eol=lf
+
+# Configuration files
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+
 # Python, documentation and configuration files
 *.py text eol=lf
 *.json text eol=lf

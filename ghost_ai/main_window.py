@@ -1,8 +1,13 @@
 """
 Main application window for Ghost AI.
-Frameless, translucent, always-on-top window supporting multiple chat conversations,
-streaming AI responses, home history page with responsive grid / list view,
-stealth click-through Ghost Mode, and screen capture invisibility.
+Frameless, translucent, always-on-top window supporting:
+- Unified top header with Ghost AI branding, Home icon, closable conversation tabs,
+  new tab button, ghost mode toggle, settings, and window controls
+- History View: 'Your conversations' with category-aware cards and date grouping
+- Chat View: 'Your conversation workspace' with modern integrated prompt card
+- Multi-chat conversation histories saved locally
+- True Win32 / macOS Ghost Mode click-through and screen capture invisibility
+Strictly preserves the standard ArrowCursor across all elements.
 """
 
 from typing import Optional, List, Dict, Any
@@ -35,6 +40,7 @@ from .persistence import (
 from .chat_view import ChatView
 from .history_view import HistoryView
 from .settings_dialog import SettingsDialog
+from .header_bar import HeaderBar
 
 
 class ResizeGrip(QWidget):
@@ -62,10 +68,11 @@ class MainWindow(QWidget):
     """
     Frameless, floating, always-on-top AI chat window.
     Features:
-    - Multi-chat conversation histories saved locally.
-    - Home Page: responsive Grid / List preview of saved conversations.
-    - Chat Room: streaming responses from OpenAI / Anthropic / Groq / Ollama / DeepSeek.
-    - True Win32 / macOS Ghost Mode click-through and screen capture invisibility.
+    - Unified header with tabs and window controls
+    - Multi-chat conversation histories saved locally
+    - Home Page: responsive date-grouped list of saved conversations
+    - Chat Room: streaming responses from OpenAI / Anthropic / Groq / Ollama / DeepSeek
+    - True Win32 / macOS Ghost Mode click-through and screen capture invisibility
     """
 
     def __init__(self):
@@ -80,8 +87,9 @@ class MainWindow(QWidget):
 
         # State
         self._chats: List[Dict[str, Any]] = []
+        self._open_tabs: List[str] = []
         self._active_chat_id: Optional[str] = None
-        self._view_mode: str = "grid"  # "grid" or "list"
+        self._view_mode: str = "list"
 
         # Window Flags: Frameless, Tool, Always On Top
         self.setWindowFlags(
@@ -114,7 +122,16 @@ class MainWindow(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Stacked Widget: 0 = HistoryView (Home), 1 = ChatView
+        # 1. Top Header Bar
+        self.header_bar = HeaderBar(self)
+        self.header_bar.home_clicked.connect(self.show_home)
+        self.header_bar.new_chat_clicked.connect(self.create_new_chat)
+        self.header_bar.tab_selected.connect(self.open_chat)
+        self.header_bar.tab_closed.connect(self.close_tab)
+        self.header_bar.settings_clicked.connect(self.open_settings)
+        main_layout.addWidget(self.header_bar)
+
+        # 2. Stacked Widget: 0 = HistoryView (Home), 1 = ChatView
         self.stack = QStackedWidget(self)
         self.stack.setCursor(Qt.CursorShape.ArrowCursor)
 
@@ -124,13 +141,14 @@ class MainWindow(QWidget):
         self.history_view.delete_chat_requested.connect(self.delete_chat)
         self.history_view.settings_requested.connect(self.open_settings)
         self.history_view.view_mode_changed.connect(self._on_view_mode_changed)
+        self.history_view.chat_renamed.connect(self._on_chat_renamed)
         self.stack.addWidget(self.history_view)
 
         self.chat_view = ChatView(self)
         self.chat_view.home_requested.connect(self.show_home)
         self.chat_view.new_chat_requested.connect(self.create_new_chat)
         self.chat_view.settings_requested.connect(self.open_settings)
-        self.chat_view.chat_updated.connect(self._schedule_save)
+        self.chat_view.chat_updated.connect(self._on_active_chat_updated)
         self.stack.addWidget(self.chat_view)
 
         main_layout.addWidget(self.stack, 1)
@@ -162,30 +180,45 @@ class MainWindow(QWidget):
         sc_close = QShortcut(QKeySequence("Ctrl+Q"), self)
         sc_close.activated.connect(self.close_application)
 
+        # Search focus: Ctrl+K
+        sc_search = QShortcut(QKeySequence("Ctrl+K"), self)
+        sc_search.activated.connect(self._focus_search)
+
+    def _focus_search(self) -> None:
+        self.show_home()
+        self.history_view.search_edit.setFocus()
+        self.history_view.search_edit.selectAll()
+
+    def _toggle_maximize(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
     def paintEvent(self, event) -> None:
-        """Render stealth dark translucent background matching Ghost aesthetic."""
+        """Render stealth dark translucent background matching modern obsidian aesthetic."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         if self._ghost_mode:
-            # Ghost mode background: extra subtle translucent dark tint
-            bg_color = QColor(15, 15, 18, 160)
-            border_color = QColor(59, 130, 246, 60)
+            bg_color = QColor(14, 14, 19, 140)
+            border_color = QColor(139, 92, 246, 60)
         else:
-            bg_color = QColor(18, 18, 22, 235)
-            border_color = QColor(255, 255, 255, 20)
+            bg_color = QColor(14, 14, 19, 245)
+            border_color = QColor(255, 255, 255, 22)
 
         painter.setBrush(bg_color)
         painter.setPen(border_color)
-        painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 10, 10)
+        painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 12, 12)
 
     def show_app(self) -> None:
         """Show the application and initialize native window properties."""
         data = load_data()
         self._chats = data.get("chats", [])
-        self._view_mode = data.get("view_mode", "grid")
+        self._view_mode = data.get("view_mode", "list")
         saved_view = data.get("current_view", "home")
         saved_active_id = data.get("active_chat_id")
+        self._open_tabs = data.get("open_tabs", [])
 
         # Sanitize and apply geometry
         geom = data.get("geometry", {})
@@ -194,7 +227,12 @@ class MainWindow(QWidget):
         )
         self.setGeometry(x, y, w, h)
 
+        # Ensure tabs contain active chat or initial recent chats
+        if not self._open_tabs and self._chats:
+            self._open_tabs = [c["id"] for c in self._chats[:3]]
+
         self.history_view.set_chats(self._chats, self._view_mode)
+        self._sync_tabs()
 
         # Restore view
         if saved_view == "chat" and saved_active_id and any(c.get("id") == saved_active_id for c in self._chats):
@@ -216,10 +254,18 @@ class MainWindow(QWidget):
         if data.get("ghost_mode", False):
             self.toggle_ghost_mode()
 
+    def _sync_tabs(self) -> None:
+        """Keep header tabs synchronized with _open_tabs."""
+        chat_lookup = {c["id"]: c for c in self._chats}
+        open_chats = [chat_lookup[cid] for cid in self._open_tabs if cid in chat_lookup]
+        self.header_bar.set_open_tabs(open_chats, self._active_chat_id)
+
     def show_home(self) -> None:
         """Switch to History overview page."""
         self.history_view.set_chats(self._chats, self._view_mode)
         self.stack.setCurrentIndex(0)
+        self.header_bar.set_home_active(True)
+        self._sync_tabs()
         self._schedule_save()
 
     def open_chat(self, chat_id: str) -> None:
@@ -227,30 +273,78 @@ class MainWindow(QWidget):
         chat = next((c for c in self._chats if c.get("id") == chat_id), None)
         if not chat:
             return
+
+        if chat_id not in self._open_tabs:
+            self._open_tabs.append(chat_id)
+
         self._active_chat_id = chat_id
         self.chat_view.set_active_chat(chat)
         self.stack.setCurrentIndex(1)
+        self.header_bar.set_home_active(False)
+        self._sync_tabs()
         self._schedule_save()
 
     def create_new_chat(self) -> None:
         """Create a new chat conversation and open it."""
         new_chat = create_chat_dict("New Chat")
         self._chats.insert(0, new_chat)
+        if new_chat["id"] not in self._open_tabs:
+            self._open_tabs.insert(0, new_chat["id"])
         self.open_chat(new_chat["id"])
+
+    def close_tab(self, chat_id: str) -> None:
+        """Close a conversation tab from the header."""
+        if chat_id in self._open_tabs:
+            self._open_tabs.remove(chat_id)
+
+        if self._active_chat_id == chat_id:
+            if self._open_tabs:
+                self.open_chat(self._open_tabs[-1])
+            else:
+                self.show_home()
+        else:
+            self._sync_tabs()
+
+        self._schedule_save()
 
     def delete_chat(self, chat_id: str) -> None:
         """Delete a chat conversation."""
+        if chat_id in self._open_tabs:
+            self._open_tabs.remove(chat_id)
+
         self._chats = [c for c in self._chats if c.get("id") != chat_id]
         if self._active_chat_id == chat_id:
-            self._active_chat_id = self._chats[0]["id"] if self._chats else None
+            if self._open_tabs:
+                self.open_chat(self._open_tabs[-1])
+            else:
+                self.show_home()
+
         self.history_view.set_chats(self._chats, self._view_mode)
+        self._sync_tabs()
+        self._schedule_save()
+
+    def _on_chat_renamed(self, chat_id: str, new_title: str) -> None:
+        for c in self._chats:
+            if c.get("id") == chat_id:
+                c["title"] = new_title
+                break
+        self.header_bar.update_tab_title(chat_id, new_title)
+        if self._active_chat_id == chat_id:
+            self.chat_view.title_edit.setText(new_title)
+        self.history_view.set_chats(self._chats, self._view_mode)
+        self._schedule_save()
+
+    def _on_active_chat_updated(self) -> None:
+        if self._active_chat_id:
+            chat = next((c for c in self._chats if c.get("id") == self._active_chat_id), None)
+            if chat:
+                self.header_bar.update_tab_title(self._active_chat_id, chat.get("title", ""))
         self._schedule_save()
 
     def open_settings(self) -> None:
         """Display the Settings dialog."""
         dialog = SettingsDialog(self)
         dialog.settings_saved.connect(self._on_settings_saved)
-        # Position centered over main window
         dx = self.x() + (self.width() - dialog.width()) // 2
         dy = self.y() + (self.height() - dialog.sizeHint().height()) // 2
         dialog.move(dx, dy)
@@ -274,6 +368,7 @@ class MainWindow(QWidget):
         hwnd = int(self.winId())
         set_click_through(hwnd, enabled)
         self.controls.set_ghost_active(enabled)
+        self.header_bar.set_ghost_mode_active(enabled)
         if enabled:
             self.setWindowOpacity(0.35)
         else:
@@ -283,6 +378,7 @@ class MainWindow(QWidget):
 
     def close_application(self) -> None:
         """Safely persist state and terminate the application."""
+        self.chat_view.stop_voice_recording()
         self._save_state()
         self.controls.close()
         self.close()
@@ -297,6 +393,7 @@ class MainWindow(QWidget):
         current_view_str = "chat" if self.stack.currentIndex() == 1 else "home"
         payload = {
             "chats": self._chats,
+            "open_tabs": self._open_tabs,
             "active_chat_id": self._active_chat_id,
             "view_mode": self._view_mode,
             "current_view": current_view_str,
@@ -317,7 +414,6 @@ class MainWindow(QWidget):
             return
 
         if event.button() == Qt.MouseButton.LeftButton:
-            # Check if clicked in bottom-right resize corner
             grip_rect = QRect(self.width() - 20, self.height() - 20, 20, 20)
             if grip_rect.contains(event.position().toPoint()):
                 self._is_resizing = True
@@ -326,8 +422,8 @@ class MainWindow(QWidget):
                 event.accept()
                 return
 
-            # Check if clicked in top drag area (top 38px)
-            if event.position().y() <= 38:
+            # Check if clicked in top drag area (top 46px)
+            if event.position().y() <= 46:
                 self._is_dragging = True
                 self._drag_start_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                 event.accept()
@@ -338,8 +434,8 @@ class MainWindow(QWidget):
     def mouseMoveEvent(self, event) -> None:
         if self._is_resizing:
             delta = event.globalPosition().toPoint() - self._resize_start_pos
-            new_w = max(320, self._resize_start_geom.width() + delta.x())
-            new_h = max(380, self._resize_start_geom.height() + delta.y())
+            new_w = max(360, self._resize_start_geom.width() + delta.x())
+            new_h = max(420, self._resize_start_geom.height() + delta.y())
             self.resize(new_w, new_h)
             event.accept()
             return
