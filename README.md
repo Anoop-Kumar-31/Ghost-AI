@@ -1,53 +1,140 @@
 <div align="center">
+  <img src="./images/GhostAi.png" alt="Ghost AI desktop application preview" width="92%">
 
-<img src="./images/GhostAi.png" alt="Ghost AI desktop app preview" width="92%">
+  <h1>👻 Ghost AI</h1>
 
-# 👻 Ghost AI
+  <h3>Your private, lightweight AI workspace companion.</h3>
 
-### Your private, lightweight AI workspace companion.
+  <p><strong>Less clutter. More focus. AI on your terms.</strong></p>
 
-**Less clutter. More focus. AI on your terms.**
+  <p>
+    A discreet desktop AI assistant for coding, research, quick answers, and everyday productivity.
+    Keep it close when you need it, move it out of the way when you don't, and work with the AI provider
+    that fits your workflow.
+  </p>
 
-A discreet desktop AI assistant for quick answers, coding help, research, and everyday productivity — with a floating interface, multi-provider support, and a workspace designed to stay out of your way.
-
-<br>
-
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
-[![Qt](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt-41CD52.svg?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-informational)](#platform-support)
-
+  <p>
+    <a href="https://github.com/Anoop-Kumar-31/Ghost-AI"><img src="https://img.shields.io/badge/GitHub-Ghost--AI-181717?logo=github" alt="GitHub repository"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache 2.0 License"></a>
+    <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10 or newer">
+    <img src="https://img.shields.io/badge/UI-PySide6%20%2F%20Qt-41CD52?logo=qt&logoColor=white" alt="PySide6 and Qt">
+    <img src="https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS-informational" alt="Windows and macOS">
+  </p>
 </div>
 
 ---
 
-## ✨ Why Ghost AI?
+## ✨ What is Ghost AI?
 
-Ghost AI brings an AI chat window into your desktop workflow without making you switch constantly between applications. Keep it nearby when you need it, move it out of the way when you don't, and choose the AI provider that fits your needs.
+Ghost AI is a floating desktop AI workspace built with **Python and PySide6**. It gives you a compact chat interface that can stay above other windows, maintain multiple conversations, and connect to cloud or local AI services.
 
-- **💬 Streaming AI responses** — see answers arrive as the model generates them.
-- **🗝️ Bring your own key** — configure supported cloud providers or compatible local model servers.
-- **🗂️ Multi-chat history** — revisit, search, rename, and manage conversations.
-- **👻 Floating, frameless interface** — a compact desktop companion designed to reduce visual clutter.
-- **🫥 Ghost Mode** — toggle click-through behavior so clicks can pass to the application underneath.
-- **🖥️ Capture-exclusion support** — uses operating-system features intended to exclude the app window from supported screen-capture paths. Behavior depends on OS, capture method, and application; do not treat this as a security boundary.
-- **⌨️ Keyboard shortcuts** — use common actions without navigating through menus.
-- **🎨 Customizable AI setup** — configure provider, model, endpoint, and API key in Settings.
+It is designed for people who want AI available during their normal desktop workflow without keeping a full browser tab open.
 
-> **Privacy note:** Ghost AI is a desktop client, not a guarantee of end-to-end privacy. When you use a cloud provider, the prompts and context you send are processed by that provider under its policies. Review the provider's terms and avoid sending secrets or sensitive information. Local providers such as Ollama can keep inference on your machine when configured to use a local endpoint.
+## 🚀 Features
+
+### AI chat and model providers
+
+- **Streaming responses** — watch responses arrive as the model generates them.
+- **Multiple providers** — configure OpenAI, Anthropic, OpenRouter, Groq, DeepSeek, Ollama, or a custom OpenAI-compatible endpoint.
+- **Bring your own API key** — use your own provider account and model ID.
+- **Model configuration** — change the provider, model, endpoint, generation settings, and system prompt in Settings.
+- **Local model support** — connect to a local Ollama server without sending prompts to a cloud inference provider.
+- **Background workers** — network requests run outside the UI thread so the interface remains responsive.
+
+### Microphone and system-audio transcription
+
+Ghost AI includes two separate voice-to-text workflows. Both use **faster-whisper locally on your computer**; the captured audio is not sent to the configured chat provider for transcription.
+
+- **🎙️ Microphone transcription** — record speech from your default microphone and convert it into text.
+- **🔊 System-audio transcription** — capture audio from a supported loopback or virtual input device. This can be useful for transcribing the other side of a meeting or call.
+- **Local Whisper model** — the current implementation loads the `tiny` faster-whisper model on the CPU using INT8 computation.
+- **Review before sending** — the transcript is inserted into the chat composer. You can edit it before manually sending it to the selected AI provider.
+- **Recording controls** — stop a recording to transcribe it, or cancel to discard the captured audio.
+- **Recording limit** — recordings are capped at three minutes per capture.
+
+**System-audio requirements:** Ghost AI needs an input device that exposes system output. Depending on your operating system and audio setup, this may be Stereo Mix, a loopback device, VB-CABLE, or BlackHole. These devices are not available by default on every computer. See [Voice setup](#-enable-voice-transcription) before using system-audio transcription.
+
+### Desktop workspace
+
+- **Floating, frameless window** — a compact, translucent interface designed to stay out of your way.
+- **Always-on-top behavior** — keep the assistant above other windows during your workflow.
+- **Ghost Mode / click-through** — toggle whether mouse clicks pass through the assistant window to the application underneath.
+- **Capture-exclusion support** — uses native Windows/macOS window APIs where available to request exclusion from supported capture paths.
+- **Conversation tabs** — keep multiple chats open and switch between them.
+- **Searchable chat history** — find, rename, open, and delete previous conversations.
+- **Persistent workspace state** — preserve conversation data, open tabs, window geometry, and selected view.
+- **File attachments** — attach supported text and source-code files to a prompt.
+- **Markdown rendering** — render headings, lists, tables, and formatted responses.
+- **Syntax highlighting** — highlight fenced code blocks with Pygments.
+- **Keyboard shortcuts** — navigate common actions without relying on menus.
+
+> **Important:** Ghost Mode and capture exclusion are convenience features, not security or privacy boundaries. Their behavior depends on the operating system, OS version, recording method, and the application doing the capture. They cannot guarantee that Ghost AI will be invisible to every screenshot, screen recorder, monitoring tool, or remote-desktop application.
 
 ## 🖼️ Preview
 
-The repository preview image is shown at the top of this README. Add more screenshots to `images/` and link them here as the interface evolves.
+The main application preview is shown at the top of this README. Additional screenshots can be added to the [`images/`](./images) directory as the interface evolves.
+
+## 🧰 Technology stack
+
+| Area | Technologies |
+|---|---|
+| Desktop UI | Python, PySide6, Qt |
+| AI requests | `requests`, provider-specific HTTP APIs |
+| Streaming and concurrency | Qt `QThread`, signals, background workers |
+| Markdown | `markdown-it-py` |
+| Code highlighting | Pygments |
+| Voice capture | `sounddevice`, NumPy |
+| Speech recognition | `faster-whisper` (Whisper `tiny`, CPU/INT8) |
+| Credential storage | Python `keyring` with the operating system credential manager |
+| Chat-history encryption | Fernet from `cryptography` |
+| Platform integration | Windows Win32 APIs, macOS Cocoa APIs |
+
+## 🤖 Supported AI providers
+
+The application currently defines the following provider configurations:
+
+| Provider | API type | Default/base endpoint |
+|---|---|---|
+| OpenAI | OpenAI-compatible | `https://api.openai.com/v1` |
+| Anthropic | Anthropic Messages API | `https://api.anthropic.com` |
+| OpenRouter | OpenAI-compatible | `https://openrouter.ai/api/v1` |
+| Groq | OpenAI-compatible | `https://api.groq.com/openai/v1` |
+| DeepSeek | OpenAI-compatible | `https://api.deepseek.com` |
+| Ollama (Local) | OpenAI-compatible | `http://localhost:11434/v1` |
+| Custom (OpenAI-Compatible) | OpenAI-compatible | Set the endpoint for your service |
+
+Model availability, model IDs, pricing, rate limits, and free-tier policies are controlled by the providers and can change. Use the exact model ID supported by your account and the selected provider. Anthropic uses a different API format from the OpenAI-compatible providers; select the Anthropic option rather than configuring it as an OpenAI-compatible service.
+
+### Trying free models
+
+Some providers and model gateways offer free or limited-use models. For example, OpenRouter provides a catalogue that can be filtered by price:
+
+1. Open the [OpenRouter model catalogue](https://openrouter.ai/models?max_price=0).
+2. Check the model's current price, context limits, provider availability, and rate limits.
+3. Create a key from [OpenRouter API Keys](https://openrouter.ai/keys).
+4. Select **OpenRouter** in Ghost AI and enter the key and exact model ID.
+5. Use the connection test in Settings before starting a conversation.
+
+A model marked free may still have rate limits, temporary unavailability, or account-specific restrictions. Confirm billing and limits with the provider before using a model.
+
+## 💻 Platform support
+
+| Platform | Status | Notes |
+|---|---|---|
+| Windows 10/11 | Primary target | Native click-through, taskbar behavior, and supported capture-exclusion APIs are implemented. |
+| macOS | Supported implementation | Native Cocoa window behavior is implemented. Microphone and audio-device permissions may need to be granted in System Settings. |
+| Linux | Limited / unverified | The Qt application may run where PySide6 is supported, but the current platform fallback does not implement native Ghost Mode or capture exclusion. |
+
+Platform-specific behavior should be tested on the exact OS version and desktop environment you intend to use.
 
 ## 🚀 Getting started
 
 ### Requirements
 
-- Python 3.10 or newer
-- Windows 10/11 or a supported macOS version
-- An internet connection for cloud AI providers
-- An API key for the cloud provider you choose, or a running local model server
+- Python **3.10 or newer**.
+- Windows 10/11 or a supported macOS version for the native desktop behavior.
+- Internet access for cloud AI providers and package installation.
+- An API key for a cloud provider, or a running local model server such as Ollama.
 
 ### 1. Clone the repository
 
@@ -56,7 +143,7 @@ git clone https://github.com/Anoop-Kumar-31/Ghost-AI.git
 cd Ghost-AI
 ```
 
-### 2. Create and activate a virtual environment (recommended)
+### 2. Create a virtual environment
 
 **Windows PowerShell**
 
@@ -72,134 +159,242 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 3. Install dependencies
+### 3. Install the core dependencies
 
 ```bash
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 4. Launch Ghost AI
+The current source also uses `cryptography` for encrypted chat history and `keyring` for persistent access to the OS credential manager. These packages are not listed in the current `requirements.txt`, so install them explicitly:
+
+```bash
+pip install cryptography keyring
+```
+
+**Credential-store note:** Make sure a working Windows Credential Manager or macOS Keychain backend is available to Python `keyring`. The application's fallback vault is memory-only; it is not suitable for retaining API keys or the chat-history encryption key across application restarts. Do not rely on encrypted history persistence until the OS credential backend is working.
+
+### 4. Enable voice transcription (optional)
+
+Voice features require additional audio and speech-recognition packages. They are not included in the core installation:
+
+```bash
+pip install -r requirements-voice.txt
+```
+
+The optional requirements install `sounddevice`, NumPy, and `faster-whisper`. The first transcription may take longer while the Whisper model is initialized and, if it is not already cached, downloaded.
+
+#### Microphone transcription
+
+1. Connect and select a working microphone in your operating system's audio settings.
+2. Launch Ghost AI and open a conversation.
+3. Select the microphone button in the composer to start recording.
+4. Select the stop button when you are done.
+5. Wait for local transcription. The transcript is inserted into the composer for review and editing.
+
+Allow microphone access when Windows or macOS asks for permission.
+
+#### System-audio transcription
+
+System-audio capture depends on an input device that exposes the computer's speaker output. Ghost AI looks for devices with names commonly associated with loopback capture, Stereo Mix, virtual cables, or BlackHole.
+
+- **Windows:** Enable **Stereo Mix** in the Sound control panel when your audio driver provides it. Otherwise, configure a virtual audio cable such as [VB-CABLE](https://vb-audio.com/Cable/).
+- **macOS:** Install and configure a loopback device such as [BlackHole](https://github.com/ExistentialAudio/BlackHole), then make it available as an input device.
+- **Other setups:** Ensure the loopback device appears as an input device to `sounddevice` before starting Ghost AI.
+
+Then select the system-audio button in the composer, stop the capture when finished, and review the transcript. If no compatible device is found, system-audio transcription will report an error rather than silently recording another source.
+
+**Audio privacy:** Audio transcription runs locally through faster-whisper. The resulting text is placed in the prompt composer; it is only sent to your configured AI provider when you choose to send that message. Obtain appropriate consent before recording or transcribing other people's conversations, and follow applicable laws and meeting policies.
+
+### 5. Launch Ghost AI
 
 ```bash
 python main.py
 ```
 
-On Windows, `GhostAI.vbs` is also provided for launching without keeping a console window open.
+On Windows, [`GhostAI.vbs`](./GhostAI.vbs) is also provided as an optional launcher that starts the application without leaving a console window open.
 
 ## ⚙️ Configure an AI provider
 
 1. Launch Ghost AI.
-2. Open **Settings** from the app header, or press `Ctrl + ,`.
+2. Open **Settings** from the application header, or press `Ctrl + ,`.
 3. Choose a provider.
-4. Enter your API key and model ID, and set a base URL if the provider requires one.
-5. Use **Test** to verify the connection, then save your settings.
+4. Enter the API key and model ID. Adjust the base URL only when required by the selected service.
+5. Use **Test** to verify the connection.
+6. Save the settings.
 
-Ghost AI supports the provider configurations currently available in the application. Typical endpoints include:
+Ghost AI validates endpoint URLs before sending credentials. Remote endpoints must use HTTPS. Plain HTTP is reserved for local loopback addresses such as `localhost` and `127.0.0.1`. Built-in providers are checked against their expected hostnames; an unrecognized custom endpoint requires explicit trust.
 
-| Provider | Base endpoint |
-|---|---|
-| OpenAI | `https://api.openai.com/v1` |
-| OpenRouter | `https://openrouter.ai/api/v1` |
-| Groq | `https://api.groq.com/openai/v1` |
-| DeepSeek | `https://api.deepseek.com` |
-| Ollama (local) | `http://localhost:11434/v1` |
-| Custom OpenAI-compatible API | Set the endpoint provided by your service |
+For Ollama, start the local server and make sure the selected model is available locally. The default endpoint is:
 
-Provider availability, model names, pricing, and limits can change. Check each provider's current documentation and enter a model ID supported by both the provider and the app. Anthropic uses a different API format; use the app's provider-specific configuration rather than assuming every provider accepts the OpenAI-compatible endpoint.
-
-### 🆓 Trying free models
-
-Some providers offer free model tiers or limited free models, but availability and quotas change frequently. For example, OpenRouter lists models with free variants in its model catalogue.
-
-1. Visit [OpenRouter's model catalogue](https://openrouter.ai/models?max_price=0).
-2. Check the model's current price, limits, and provider availability.
-3. Create an API key at [OpenRouter API Keys](https://openrouter.ai/keys).
-4. Select **OpenRouter** in Ghost AI and enter the key and exact model ID.
-5. Test the connection before using the model.
-
-A model labelled free may still have rate limits, temporary unavailability, or account-specific restrictions. A key limit is not the same thing as free credits. Check the provider's billing page before using paid models.
+```text
+http://localhost:11434/v1
+```
 
 ## ⌨️ Keyboard shortcuts
 
 | Shortcut | Action |
 |---|---|
-| `Enter` | Send message |
-| `Shift + Enter` | Insert a newline |
+| `Enter` | Send the current message |
+| `Shift + Enter` | Insert a new line |
 | `Ctrl + G` | Toggle Ghost Mode / click-through |
-| `Ctrl + N` | Start a new chat |
-| `Ctrl + H` or `Esc` | Return to Home / Chats |
+| `Ctrl + N` | Create a new chat |
+| `Ctrl + H` | Return to Home / chat history |
+| `Ctrl + K` | Focus chat-history search |
 | `Ctrl + ,` | Open Settings |
 | `Ctrl + Q` | Close Ghost AI |
 
-## 🧱 Project structure
+## 📎 File attachments
 
-```text
-Ghost-AI/
-├── ghost_ai/
-│   ├── ai_service.py       # Provider requests and streamed AI responses
-│   ├── chat_view.py        # Chat interface and message bubbles
-│   ├── config.py           # Provider presets and configuration
-│   ├── controls.py         # Floating window controls
-│   ├── history_view.py     # Conversation history UI
-│   ├── macos_utils.py      # macOS-specific window behavior
-│   ├── main_window.py      # Main window and navigation
-│   ├── persistence.py      # Local conversation/settings persistence
-│   ├── platform_utils.py   # Platform-specific helpers
-│   └── win32_utils.py      # Windows-specific window behavior
-├── images/                 # Project screenshots and branding
-├── tests/                  # Automated tests
-├── GhostAI.vbs             # Optional Windows launcher
-├── main.py                 # Application entry point
-├── requirements.txt        # Python dependencies
-└── README.md
-```
+The composer can attach supported text and source-code files, including common formats such as `.txt`, `.md`, `.py`, `.js`, `.ts`, `.jsx`, `.tsx`, `.json`, `.html`, `.css`, `.c`, `.cpp`, `.h`, `.hpp`, `.rs`, `.go`, `.java`, `.xml`, `.yaml`, `.yml`, `.toml`, `.sh`, `.bat`, `.ps1`, `.sql`, and `.csv`.
+
+Current attachment safeguards include an extension allowlist, a **1 MB per-file size limit**, and a limit on the amount of extracted text included in a prompt. Binary files, images, PDFs, and arbitrary file execution are not supported by this attachment flow.
+
+## 🔐 Privacy and security
+
+Ghost AI is a desktop client. It is not an end-to-end encrypted AI service and does not make cloud-provider processing private.
+
+- **API keys:** Keys are stored separately from the JSON configuration file through Python `keyring` and the operating system's credential manager when a supported backend is available.
+- **Chat history:** Conversation data is encrypted at rest using Fernet. The encryption key is stored through the credential manager. Keep the credential-store entry and its backups safe; losing the key can make the encrypted chat history unreadable.
+- **Legacy data:** Older plaintext configuration and chat-history files may be migrated. The history migration can create a `.json.bak` plaintext backup; protect or securely remove that backup after confirming the migration.
+- **Cloud providers:** Prompts, conversation context, attachments' extracted text, and any transcript you send are processed by the selected provider under its terms and privacy policy.
+- **Local inference:** A local endpoint such as Ollama can keep model inference on your machine when it is genuinely bound to a local service. Verify the endpoint before sending private data.
+- **Endpoint validation:** Remote endpoints require HTTPS; local HTTP is limited to loopback. Unrecognized custom hosts require explicit user trust.
+- **Screen capture:** Capture exclusion is OS-dependent and cannot guarantee invisibility to every capture or monitoring method.
+- **Voice:** Audio is transcribed locally in the current implementation. Review the transcript before sending it to a cloud provider.
+
+Never commit API keys, access tokens, credential backups, private conversations, or local application data to the repository. Do not send secrets or sensitive information to an AI provider unless you understand and accept its data-handling policy.
 
 ## 🧪 Run the tests
+
+Install the test runner:
+
+```bash
+pip install pytest
+```
+
+Run the suite from the repository root:
 
 ```bash
 python -m pytest tests -v
 ```
 
-Tests and platform-specific behavior may differ across operating systems. Run the suite on the platforms you intend to support before publishing a release.
+The test suite includes coverage for:
 
-## 🔐 Privacy and security
+- Chat-generation concurrency and multi-chat isolation.
+- Markdown rendering and syntax highlighting.
+- Chat-history persistence and geometry validation.
+- Endpoint validation, credential handling, encrypted history, attachment safeguards, and voice cancellation.
 
-- API keys are configured locally through Ghost AI's settings.
-- Cloud AI providers receive the requests you send them; review their data handling policies.
-- Never commit API keys, tokens, personal data, or local configuration files to the repository.
-- Use local inference if you need prompts to remain on your own machine, and verify that the configured endpoint is actually local.
-- Screen-capture exclusion is an OS feature with limitations; it cannot guarantee invisibility to every recording, capture, or monitoring tool.
+On headless Linux/CI environments, Qt may need an offscreen platform plugin:
+
+```bash
+QT_QPA_PLATFORM=offscreen python -m pytest tests -v
+```
+
+Tests that depend on native window behavior, audio devices, or a desktop credential manager should also be exercised manually on the target operating system.
+
+## 🧱 Project structure
+
+```text
+Ghost-AI/
+├── assets/
+│   └── icons/                   # SVG icons used by the desktop UI
+├── ghost_ai/
+│   ├── ai_service.py             # Provider APIs, streaming, and AI workers
+│   ├── chat_view.py              # Chat interface, composer, attachments, voice controls
+│   ├── config.py                 # Provider presets, settings, and endpoint validation
+│   ├── controls.py               # Independent floating window controls
+│   ├── header_bar.py             # Header, navigation, and conversation tabs
+│   ├── history_view.py           # Searchable conversation history and home view
+│   ├── icon_manager.py           # SVG icon loading, recoloring, and caching
+│   ├── macos_utils.py            # Native macOS window integration
+│   ├── main_window.py            # Main window, navigation, shortcuts, and lifecycle
+│   ├── markdown_renderer.py      # Markdown parsing and Pygments highlighting
+│   ├── persistence.py            # Encrypted chat-history persistence
+│   ├── platform_utils.py         # Cross-platform native-feature dispatch
+│   ├── secure_store.py           # OS credential storage and history key management
+│   ├── settings_dialog.py        # Provider and model settings UI
+│   ├── voice_worker.py           # Microphone and system-audio transcription workers
+│   └── win32_utils.py            # Native Windows window integration
+├── images/                       # Screenshots and project branding
+├── tests/
+│   ├── conftest.py               # Shared pytest fixtures
+│   ├── test_chat_concurrency.py  # Multi-chat generation tests
+│   ├── test_markdown_renderer.py # Markdown renderer tests
+│   ├── test_persistence.py       # Persistence and geometry tests
+│   └── test_security_hardening.py # Security and input-hardening tests
+├── GhostAI.vbs                   # Optional Windows launcher
+├── LICENSE                       # Apache License 2.0
+├── main.py                       # Application entry point
+├── requirements.txt              # Core application dependencies
+├── requirements-voice.txt        # Optional audio/transcription dependencies
+└── README.md
+```
 
 ## 🛠️ Troubleshooting
 
-**The API test fails**
-- Verify the provider, API key, endpoint, and exact model ID.
-- Check whether the model is available to your account and whether you have quota or credits.
-- Read the full provider error. HTTP `401` usually indicates authentication trouble; HTTP `429` can indicate rate limits or quota/billing limits.
+### Ghost AI does not launch
 
-**A free model stops responding**
+- Activate the virtual environment before installing or running the application.
+- Install the core dependencies and the additional `cryptography` and `keyring` packages.
+- Run `python main.py` from the repository directory to see startup errors.
+- Check that your Python and operating-system versions are supported.
+
+### Chat history cannot be decrypted
+
+- Check that the OS credential manager is available to Python `keyring`.
+- Do not delete or reset the Ghost AI history encryption-key entry in the credential manager.
+- Restore the matching credential-store entry and chat-history backup together when recovering data.
+- Do not replace an unreadable encrypted history file with a new empty file; preserve a copy before troubleshooting.
+
+### API connection test fails
+
+- Verify the selected provider, API key, base URL, and exact model ID.
+- Confirm that the model is enabled for your account and that the account has quota or billing access.
+- Check that a remote endpoint uses HTTPS and that a custom host has been trusted.
+- HTTP `401` commonly indicates an authentication problem. HTTP `429` can indicate rate limits or quota/billing limits.
+
+### Microphone transcription does not work
+
+- Install the optional voice dependencies with `pip install -r requirements-voice.txt`.
+- Check that the operating system has granted microphone access.
+- Confirm that the correct microphone is selected as the default input device.
+- Check the application logs and the audio device configuration.
+
+### System audio cannot be detected
+
+- Confirm that Stereo Mix, a loopback input, VB-CABLE, or BlackHole is installed and enabled.
+- Confirm that the device appears as an input device to PortAudio / `sounddevice`.
+- On Windows, enable Stereo Mix in the Recording devices panel when your driver provides it, or configure a virtual audio cable.
+- On macOS, check the BlackHole aggregate/multi-output setup and system audio permissions.
+
+### A free model stops responding
+
 - Check the provider's current free-tier limits and model availability.
-- Try another currently available free model.
-- Avoid assuming a `:free` model ID will remain available indefinitely.
-
-**Ghost AI does not launch**
-- Activate the virtual environment and reinstall requirements.
-- Run `python main.py` from the project directory to see startup errors.
-- Check the supported Python and OS versions.
+- Try another model that is currently available to your account.
+- Do not assume that a `:free` model ID or free quota will remain available indefinitely.
 
 ## 🤝 Contributing
 
-Issues, bug reports, ideas, and pull requests are welcome. When reporting a bug, include your OS, Python version, provider/model (never the API key), steps to reproduce, and the relevant error message.
+Issues, bug reports, feature requests, and pull requests are welcome.
+
+When reporting a bug, include:
+
+- Operating system and version.
+- Python version.
+- Ghost AI version or commit.
+- Provider and model name (never include your API key).
+- Steps to reproduce and the relevant error or log output.
+
+Please avoid attaching private chat histories, audio recordings, API keys, or other sensitive data to public issues.
 
 ## 📄 License
 
-Ghost AI is licensed under the [Apache License 2.0](LICENSE).
+Ghost AI is licensed under the [Apache License 2.0](./LICENSE).
 
 ---
 
 <div align="center">
-
-**Ghost AI** · Your workspace, with a little more room to think. 👻
-
+  <strong>Ghost AI</strong> · Your workspace, with a little more room to think. 👻
 </div>
