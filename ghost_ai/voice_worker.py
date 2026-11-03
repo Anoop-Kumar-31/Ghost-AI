@@ -17,6 +17,9 @@ from PySide6.QtCore import QThread, Signal
 
 logger = logging.getLogger(__name__)
 
+# Maximum recording time limit (3 minutes) to prevent unbounded memory growth
+MAX_RECORDING_SECONDS = 180
+
 # ---------------------------------------------------------------------------
 # Lazy singleton: load faster-whisper tiny model once on first transcription
 # ---------------------------------------------------------------------------
@@ -115,11 +118,6 @@ class MicVoiceWorker(QThread):
         self.status.emit("recording")
         logger.info("MicVoiceWorker: recording started")
 
-        def audio_callback(indata, frames, time_info, status_flags):
-            if status_flags:
-                logger.warning("Mic status: %s", status_flags)
-            self._frames.append(indata.copy())
-
         # Determine native default input device and its sample rate
         try:
             default_input = sd.default.device[0]
@@ -132,6 +130,19 @@ class MicVoiceWorker(QThread):
         except Exception:
             sample_rate = 16000
             channels = 1
+
+        max_allowed_frames = int(sample_rate * MAX_RECORDING_SECONDS)
+        total_frames = 0
+
+        def audio_callback(indata, frames, time_info, status_flags):
+            nonlocal total_frames
+            if status_flags:
+                logger.warning("Mic status: %s", status_flags)
+            self._frames.append(indata.copy())
+            total_frames += frames
+            if total_frames >= max_allowed_frames:
+                logger.warning("Mic recording reached maximum duration (%ds); stopping.", MAX_RECORDING_SECONDS)
+                self._stop_flag.set()
 
         try:
             with sd.InputStream(
@@ -159,7 +170,7 @@ class MicVoiceWorker(QThread):
                 audio = audio.mean(axis=1)
             audio = audio.flatten()
             text = _transcribe_audio(audio, sample_rate)
-            logger.info("MicVoiceWorker transcript: %r", text)
+            logger.info("MicVoiceWorker transcript generated (%d characters)", len(text))
             if text:
                 self.transcribed.emit(text)
         except Exception as exc:
@@ -239,12 +250,19 @@ class SysAudioWorker(QThread):
 
         sample_rate = int(dev_info.get("default_samplerate", 48000))
         channels = max(1, min(dev_info.get("max_input_channels", 2), 2))
+        max_allowed_frames = int(sample_rate * MAX_RECORDING_SECONDS)
+        total_frames = 0
 
         self.status.emit("recording")
         logger.info("SysAudioWorker: recording device [%d] at %d Hz, %d ch", dev_idx, sample_rate, channels)
 
         def audio_callback(indata, frames, time_info, status_flags):
+            nonlocal total_frames
             self._frames.append(indata.copy())
+            total_frames += frames
+            if total_frames >= max_allowed_frames:
+                logger.warning("System audio recording reached maximum duration (%ds); stopping.", MAX_RECORDING_SECONDS)
+                self._stop_flag.set()
 
         try:
             with sd.InputStream(
@@ -273,7 +291,7 @@ class SysAudioWorker(QThread):
                 audio = audio.mean(axis=1)
             audio = audio.flatten()
             text = _transcribe_audio(audio, sample_rate)
-            logger.info("SysAudioWorker transcript: %r", text)
+            logger.info("SysAudioWorker transcript generated (%d characters)", len(text))
             if text:
                 self.transcribed.emit(text)
         except Exception as exc:

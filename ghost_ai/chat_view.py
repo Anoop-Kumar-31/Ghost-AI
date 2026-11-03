@@ -12,6 +12,8 @@ Strictly preserves the standard ArrowCursor across all elements.
 """
 
 import re
+import uuid
+from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
@@ -246,7 +248,6 @@ class MessageBubble(QFrame):
         self.copy_btn.setFixedSize(26, 20)
         self.copy_btn.setCursor(Qt.CursorShape.ArrowCursor)
         self.copy_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.copy_btn.setToolTip("Copy response")
         self.copy_btn.setIcon(get_icon("copy", 12, "#71717a"))
         self.copy_btn.setIconSize(QSize(12, 12))
         self.copy_btn.setStyleSheet(
@@ -346,6 +347,7 @@ class ChatView(QWidget):
 
         self._active_chat: Optional[Dict[str, Any]] = None
         self._current_worker: Optional[AIChatWorker] = None
+        self._generation_contexts: Dict[str, Dict[str, Any]] = {}
         self._streaming_bubble: Optional[MessageBubble] = None
         self._mic_worker: Optional[MicVoiceWorker] = None
         self._sys_worker: Optional[SysAudioWorker] = None
@@ -567,7 +569,6 @@ class ChatView(QWidget):
             btn_size=28,
             color_default=COLOR_DEFAULT,
             color_hover=COLOR_HOVER,
-            tooltip="Attach context / file",
             parent=self.input_card,
         )
         self.attach_btn.clicked.connect(self._on_attach_clicked)
@@ -578,7 +579,6 @@ class ChatView(QWidget):
         self.mic_btn.setFixedSize(28, 28)
         self.mic_btn.setCursor(Qt.CursorShape.ArrowCursor)
         self.mic_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.mic_btn.setToolTip("Record Microphone (Speech-to-Text)")
         self.mic_btn.setIcon(get_icon("mic", 16, COLOR_DEFAULT))
         self.mic_btn.setIconSize(QSize(16, 16))
         self.mic_btn.setStyleSheet(self._mic_btn_idle_style())
@@ -590,7 +590,6 @@ class ChatView(QWidget):
         self.sys_audio_btn.setFixedSize(28, 28)
         self.sys_audio_btn.setCursor(Qt.CursorShape.ArrowCursor)
         self.sys_audio_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.sys_audio_btn.setToolTip("Capture Meeting Audio (Google Meet / Zoom)")
         self.sys_audio_btn.setIcon(get_icon("volume-2", 16, COLOR_DEFAULT))
         self.sys_audio_btn.setIconSize(QSize(16, 16))
         self.sys_audio_btn.setStyleSheet(self._sys_audio_btn_idle_style())
@@ -603,7 +602,6 @@ class ChatView(QWidget):
         self.model_badge = QPushButton("Claude", self.input_card)
         self.model_badge.setCursor(Qt.CursorShape.ArrowCursor)
         self.model_badge.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.model_badge.setToolTip("Current AI Model (Click to configure)")
         self.model_badge.setStyleSheet(
             """
             QPushButton {
@@ -629,7 +627,6 @@ class ChatView(QWidget):
         self.send_btn.setFixedSize(28, 28)
         self.send_btn.setCursor(Qt.CursorShape.ArrowCursor)
         self.send_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.send_btn.setToolTip("Send message (Enter)")
         self.send_btn.setIcon(get_icon("arrow-up", 16, "#ffffff"))
         self.send_btn.setIconSize(QSize(16, 16))
         self.send_btn.setStyleSheet(
@@ -682,11 +679,16 @@ class ChatView(QWidget):
             self, "Attach file", "", "Text files (*.txt *.md *.py *.js *.ts *.json *.html *.css);;All files (*.*)"
         )
         if path:
+            file_path = Path(path)
             try:
-                with open(path, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read(4000)
+                # 1 MB size guard to avoid locking the UI on large files
+                if file_path.stat().st_size > 1024 * 1024:
+                    prefix = f"--- File too large: {file_path.name} (> 1MB) ---\n"
+                else:
+                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read(10000)
+                    prefix = f"--- Context from {file_path.name} ---\n{content}\n---\n"
                 cur = self.input_edit.toPlainText().strip()
-                prefix = f"--- Context from {path.split('/')[-1]} ---\n{content}\n---\n"
                 self.input_edit.setPlainText(f"{prefix}\n{cur}" if cur else prefix)
                 self.input_edit.setFocus()
             except Exception:
@@ -712,7 +714,12 @@ class ChatView(QWidget):
         self._clear_messages_display()
 
         messages = chat.get("messages", [])
-        if not messages:
+        active_ctx = next(
+            (ctx for ctx in self._generation_contexts.values() if ctx.get("chat_id") == chat.get("id")),
+            None,
+        )
+
+        if not messages and not active_ctx:
             empty_lbl = QLabel(
                 "💬 Start a conversation with Ghost AI.\n"
                 "Responses are streaming, encrypted in transit, and completely invisible to screen capture.",
@@ -734,6 +741,22 @@ class ChatView(QWidget):
                     parent=self.messages_container,
                 )
                 self._add_bubble_row(bubble)
+
+            # Re-attach streaming bubble if this chat has active generation
+            if active_ctx:
+                disp_text = active_ctx.get("buffer") or "..."
+                bubble = MessageBubble("assistant", disp_text, datetime.now().isoformat(), self.messages_container)
+                active_ctx["bubble"] = bubble
+                self._add_bubble_row(bubble)
+                self._current_worker = active_ctx.get("worker")
+                self._set_generating_state(True)
+            else:
+                is_any_running = any(
+                    ctx["worker"].isRunning()
+                    for ctx in self._generation_contexts.values()
+                    if ctx.get("worker")
+                )
+                self._set_generating_state(is_any_running)
 
         self._scroll_to_bottom()
         self.check_api_key_banner()
@@ -777,7 +800,6 @@ class ChatView(QWidget):
         if self._current_worker and self._current_worker.isRunning():
             self._stream_timer.stop()
             self._current_worker.cancel()
-            self._set_generating_state(False)
             return
 
         text = self.input_edit.toPlainText().strip()
@@ -813,22 +835,33 @@ class ChatView(QWidget):
         self._add_bubble_row(user_bubble)
 
         # Prepare AI response placeholder
-        self._streaming_bubble = MessageBubble("assistant", "...", now_iso, self.messages_container)
-        self._add_bubble_row(self._streaming_bubble)
+        bubble = MessageBubble("assistant", "...", now_iso, self.messages_container)
+        self._add_bubble_row(bubble)
         self._scroll_to_bottom()
 
-        # Start background worker and debounce timer
-        self._streaming_buffer = ""
-        self._stream_timer.start()
+        chat = self._active_chat
+        chat_id = chat.get("id", "")
+        request_id = str(uuid.uuid4())
+        messages_snapshot = [dict(m) for m in chat.get("messages", [])]
 
         cfg = load_config()
-        self._current_worker = AIChatWorker(self._active_chat["messages"], cfg, self)
-        self._current_worker.chunk_received.connect(self._on_chunk_received)
-        self._current_worker.finished.connect(self._on_generation_finished)
-        self._current_worker.error.connect(self._on_generation_error)
+        worker = AIChatWorker(messages_snapshot, cfg, self, request_id=request_id)
+        self._current_worker = worker
+        self._generation_contexts[request_id] = {
+            "chat_id": chat_id,
+            "chat": chat,
+            "bubble": bubble,
+            "buffer": "",
+            "worker": worker,
+        }
+
+        worker.chunk_received.connect(self._on_worker_chunk)
+        worker.response_finished.connect(self._on_worker_finished)
+        worker.cancelled.connect(self._on_worker_cancelled)
+        worker.error.connect(self._on_worker_error)
 
         self._set_generating_state(True)
-        self._current_worker.start()
+        worker.start()
 
     def _set_generating_state(self, generating: bool) -> None:
         if generating:
@@ -861,45 +894,120 @@ class ChatView(QWidget):
                 """
             )
 
-    def _on_chunk_received(self, chunk: str) -> None:
-        if not self._streaming_bubble:
+    def _on_worker_chunk(self, request_id: str, chunk: str) -> None:
+        context = self._generation_contexts.get(request_id)
+        if not context:
             return
-        if self._streaming_buffer == "...":
-            self._streaming_buffer = chunk
+        if context["buffer"] == "...":
+            context["buffer"] = chunk
         else:
-            self._streaming_buffer += chunk
+            context["buffer"] += chunk
+
+        if self._active_chat and self._active_chat.get("id") == context["chat_id"]:
+            bubble = context.get("bubble")
+            if bubble:
+                bubble.update_content(context["buffer"])
+                self._scroll_to_bottom()
 
     def _flush_stream_buffer(self) -> None:
-        if self._streaming_bubble and self._streaming_buffer:
-            self._streaming_bubble.update_content(self._streaming_buffer)
-            self._scroll_to_bottom()
+        pass
 
-    def _on_generation_finished(self, full_response: str) -> None:
-        self._stream_timer.stop()
-        self._set_generating_state(False)
-        if not self._active_chat or not self._streaming_bubble:
+    def _on_worker_finished(self, request_id: str, full_response: str) -> None:
+        context = self._generation_contexts.pop(request_id, None)
+        if not context:
             return
 
-        final_text = full_response if full_response else self._streaming_buffer
+        final_text = full_response if full_response else context.get("buffer", "")
         if not final_text or final_text == "...":
             final_text = "(Empty response)"
-        self._streaming_bubble.update_content(final_text)
-        self._streaming_buffer = ""
 
         now_iso = datetime.now().isoformat()
+        target_chat = context["chat"]
         ai_msg = {"role": "assistant", "content": final_text, "timestamp": now_iso}
-        self._active_chat["messages"].append(ai_msg)
-        self._active_chat["updated_at"] = now_iso
+        if "messages" not in target_chat:
+            target_chat["messages"] = []
+        target_chat["messages"].append(ai_msg)
+        target_chat["updated_at"] = now_iso
         self.chat_updated.emit()
-        self._scroll_to_bottom()
 
-    def _on_generation_error(self, err_msg: str) -> None:
-        self._stream_timer.stop()
-        self._set_generating_state(False)
-        if self._streaming_bubble:
-            self._streaming_bubble.update_content(f"⚠️ {err_msg}")
-        self._streaming_buffer = ""
-        self._scroll_to_bottom()
+        if self._active_chat and self._active_chat.get("id") == context["chat_id"]:
+            bubble = context.get("bubble")
+            if bubble:
+                bubble.update_content(final_text)
+                self._scroll_to_bottom()
+
+        if self._current_worker == context.get("worker"):
+            self._current_worker = None
+        if not self._generation_contexts:
+            self._set_generating_state(False)
+
+    def _on_worker_cancelled(self, request_id: str, partial_response: str) -> None:
+        context = self._generation_contexts.pop(request_id, None)
+        if not context:
+            return
+
+        final_text = partial_response if partial_response else context.get("buffer", "")
+        target_chat = context["chat"]
+        now_iso = datetime.now().isoformat()
+
+        if final_text and final_text != "...":
+            ai_msg = {
+                "role": "assistant",
+                "content": final_text,
+                "timestamp": now_iso,
+                "interrupted": True,
+            }
+            if "messages" not in target_chat:
+                target_chat["messages"] = []
+            target_chat["messages"].append(ai_msg)
+            target_chat["updated_at"] = now_iso
+            self.chat_updated.emit()
+
+        if self._active_chat and self._active_chat.get("id") == context["chat_id"]:
+            bubble = context.get("bubble")
+            if bubble:
+                disp = final_text if (final_text and final_text != "...") else "(Cancelled)"
+                bubble.update_content(f"{disp}\n\n*[Response cancelled]*")
+                self._scroll_to_bottom()
+
+        if self._current_worker == context.get("worker"):
+            self._current_worker = None
+        if not self._generation_contexts:
+            self._set_generating_state(False)
+
+    def _on_worker_error(self, request_id: str, err_msg: str) -> None:
+        context = self._generation_contexts.pop(request_id, None)
+        if not context:
+            return
+
+        if self._active_chat and self._active_chat.get("id") == context["chat_id"]:
+            bubble = context.get("bubble")
+            if bubble:
+                bubble.update_content(f"⚠️ {err_msg}")
+                self._scroll_to_bottom()
+
+        if self._current_worker == context.get("worker"):
+            self._current_worker = None
+        if not self._generation_contexts:
+            self._set_generating_state(False)
+
+    def shutdown_workers(self, timeout_ms: int = 5000) -> None:
+        """Safely terminate any active AI workers and voice recording on shutdown."""
+        self.stop_voice_recording()
+        workers = [
+            ctx["worker"]
+            for ctx in list(self._generation_contexts.values())
+            if ctx.get("worker")
+        ]
+        if self._current_worker and self._current_worker not in workers:
+            workers.append(self._current_worker)
+
+        for w in workers:
+            if w.isRunning():
+                w.cancel()
+        for w in workers:
+            if w.isRunning():
+                w.wait(timeout_ms)
 
     # ------------------------------------------------------------------
     # Voice-to-Text (Microphone & System/Meeting Audio WASAPI Loopback)

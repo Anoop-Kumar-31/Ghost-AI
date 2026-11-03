@@ -10,8 +10,11 @@ Frameless, translucent, always-on-top window supporting:
 Strictly preserves the standard ArrowCursor across all elements.
 """
 
+import logging
 from typing import Optional, List, Dict, Any
-from PySide6.QtCore import Qt, QPoint, QRect, QTimer, Signal
+
+logger = logging.getLogger(__name__)
+from PySide6.QtCore import Qt, QPoint, QRect, QTimer, Signal, QObject, QEvent
 from PySide6.QtGui import (
     QGuiApplication,
     QKeySequence,
@@ -41,6 +44,15 @@ from .chat_view import ChatView
 from .history_view import HistoryView
 from .settings_dialog import SettingsDialog
 from .header_bar import HeaderBar
+
+
+class NoToolTipFilter(QObject):
+    """Global event filter that suppresses all QToolTip events for stealth Ghost Mode."""
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.ToolTip:
+            return True
+        return super().eventFilter(watched, event)
 
 
 class ResizeGrip(QWidget):
@@ -116,6 +128,12 @@ class MainWindow(QWidget):
         self.controls = ControlsWindow()
         self.controls.toggle_ghost_requested.connect(self.toggle_ghost_mode)
         self.controls.close_requested.connect(self.close_application)
+
+        # Global stealth tooltip suppression
+        app_inst = QGuiApplication.instance()
+        if app_inst:
+            self._tooltip_filter = NoToolTipFilter(self)
+            app_inst.installEventFilter(self._tooltip_filter)
 
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
@@ -245,7 +263,9 @@ class MainWindow(QWidget):
         # Apply native platform attributes (taskbar exclusion and capture protection)
         hwnd = int(self.winId())
         exclude_from_taskbar(hwnd)
-        set_capture_excluded(hwnd, True)
+        capture_ok = set_capture_excluded(hwnd, True)
+        if not capture_ok:
+            logger.warning("Screen capture protection could not be enabled for main window")
 
         # Initialize and position floating controls
         self.controls.show_controls(self.geometry())
@@ -378,7 +398,8 @@ class MainWindow(QWidget):
 
     def close_application(self) -> None:
         """Safely persist state and terminate the application."""
-        self.chat_view.stop_voice_recording()
+        self._save_timer.stop()
+        self.chat_view.shutdown_workers(5000)
         self._save_state()
         self.controls.close()
         self.close()

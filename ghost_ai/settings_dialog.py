@@ -175,7 +175,6 @@ class SettingsDialog(QDialog):
         self.show_key_btn = QPushButton("👁", card)
         self.show_key_btn.setFixedSize(28, 26)
         self.show_key_btn.setCursor(Qt.CursorShape.ArrowCursor)
-        self.show_key_btn.setToolTip("Show / Hide Key")
         self.show_key_btn.clicked.connect(self._toggle_show_key)
         key_box.addWidget(self.show_key_btn)
         card_layout.addLayout(key_box)

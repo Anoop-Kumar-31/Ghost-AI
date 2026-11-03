@@ -1,0 +1,9 @@
+# Ghost AI — Development & Testing Dependencies
+# Install for testing and development:
+# pip install -r requirements-dev.txt
+
+-r requirements.txt
+-r requirements-voice.txt
+pytest>=7.0.0
+pytest-asyncio
+

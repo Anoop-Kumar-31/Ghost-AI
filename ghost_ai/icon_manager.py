@@ -111,8 +111,6 @@ class IconButton(QPushButton):
             }
             """
         )
-        if tooltip:
-            self.setToolTip(tooltip)
         self._refresh_icon(self._c_default)
 
     def _refresh_icon(self, color: str) -> None:

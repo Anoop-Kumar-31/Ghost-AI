@@ -103,6 +103,53 @@ def get_default_config_path() -> Path:
     return base_dir / "GhostAI" / "config.json"
 
 
+def validate_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate and sanitize configuration settings against schema boundaries."""
+    validated = dict(DEFAULT_CONFIG)
+    if not isinstance(raw_config, dict):
+        return validated
+
+    # Provider
+    provider = str(raw_config.get("provider", validated["provider"])).strip()
+    if provider in PROVIDER_PRESETS or provider:
+        validated["provider"] = provider
+
+    # Base URL
+    base_url = str(raw_config.get("base_url", validated["base_url"])).strip().rstrip("/")
+    if base_url.startswith(("http://", "https://")):
+        validated["base_url"] = base_url
+
+    # Model
+    model = str(raw_config.get("model", validated["model"])).strip()
+    if model:
+        validated["model"] = model
+
+    # API Key
+    validated["api_key"] = str(raw_config.get("api_key", "")).strip()
+
+    # Temperature (clamp between 0.0 and 2.0)
+    try:
+        temp = float(raw_config.get("temperature", 0.7))
+        validated["temperature"] = max(0.0, min(2.0, temp))
+    except (ValueError, TypeError):
+        validated["temperature"] = 0.7
+
+    # Max tokens (clamp between 1 and 128000)
+    try:
+        tokens = int(raw_config.get("max_tokens", 2048))
+        validated["max_tokens"] = max(1, min(128000, tokens))
+    except (ValueError, TypeError):
+        validated["max_tokens"] = 2048
+
+    # Stream
+    validated["stream"] = bool(raw_config.get("stream", True))
+
+    # System prompt
+    validated["system_prompt"] = str(raw_config.get("system_prompt", DEFAULT_SYSTEM_PROMPT))
+
+    return validated
+
+
 def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
     """Load configuration from disk with fallback to defaults."""
     path = config_path or get_default_config_path()
@@ -120,9 +167,7 @@ def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
         if not isinstance(data, dict):
             return dict(DEFAULT_CONFIG)
 
-        result = dict(DEFAULT_CONFIG)
-        result.update(data)
-        return result
+        return validate_config(data)
     except Exception as e:
         logger.error("Error reading config from %s: %s. Using default config.", path, e)
         return dict(DEFAULT_CONFIG)
@@ -132,6 +177,7 @@ def save_config(config: Dict[str, Any], config_path: Optional[Path] = None) -> b
     """Safely and atomically persist configuration to disk."""
     path = config_path or get_default_config_path()
     try:
+        validated = validate_config(config)
         path.parent.mkdir(parents=True, exist_ok=True)
         temp_dir = path.parent
         with tempfile.NamedTemporaryFile(
@@ -141,7 +187,7 @@ def save_config(config: Dict[str, Any], config_path: Optional[Path] = None) -> b
             delete=False,
             suffix=".tmp",
         ) as tf:
-            json.dump(config, tf, indent=2, ensure_ascii=False)
+            json.dump(validated, tf, indent=2, ensure_ascii=False)
             temp_path = Path(tf.name)
 
         temp_path.replace(path)

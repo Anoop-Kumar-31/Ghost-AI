@@ -1,0 +1,13 @@
+{
+  "include": [
+    "ghost_ai",
+    "tests"
+  ],
+  "extraPaths": [
+    ".",
+    "C:/Users/amt31/AppData/Roaming/Python/Python312/site-packages",
+    "C:/Python312/Lib/site-packages"
+  ],
+  "pythonPath": "C:/Python312/python.exe"
+}
+

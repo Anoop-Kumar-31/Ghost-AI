@@ -3,10 +3,10 @@ History and Home view for Ghost AI.
 Matches the sleek modern dark UI with:
 - 'Your conversations' header with '+ New chat' action button
 - Search bar with 'Ctrl K' shortcut hint
-- 'Recent' section with 'Sort: Newest first↓'
+- 'Recent' section with 'Sort: Newest first ↓'
 - Date-grouped conversation cards ('TODAY', 'YESTERDAY', 'PREVIOUS 7 DAYS', 'OLDER')
 - Topic-aware category icons (</>, 📖, 💡, 💬), titles, snippets, timestamps, and '•••' menu
-- 'Load more conversations↓' footer
+- 'Load more conversations ↓' footer
 Strictly preserves the standard ArrowCursor across all elements.
 """
 
@@ -205,7 +205,6 @@ class ConversationItem(QFrame):
         self.menu_btn.setFixedSize(24, 24)
         self.menu_btn.setCursor(Qt.CursorShape.ArrowCursor)
         self.menu_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.menu_btn.setToolTip("More options")
         self.menu_btn.setIcon(get_icon("more-horizontal", 14, "#71717a"))
         self.menu_btn.setIconSize(QSize(14, 14))
         self.menu_btn.setStyleSheet(
@@ -424,7 +423,7 @@ class HistoryView(QWidget):
 
         main_layout.addWidget(search_card)
 
-        # 3. Section Header: 'Recent' + 'Sort: Newest first↓'
+        # 3. Section Header: 'Recent' + 'Sort: Newest first ↓'
         section_row = QHBoxLayout()
         section_row.setContentsMargins(0, 4, 0, 0)
         section_row.setSpacing(8)
@@ -538,10 +537,10 @@ class HistoryView(QWidget):
             self.sort_btn.setText("Sort: Oldest first ↑")
         elif self._sort_mode == "oldest":
             self._sort_mode = "title"
-            self.sort_btn.setText("Sort: Title A-Z↓")
+            self.sort_btn.setText("Sort: Title A-Z ↓")
         else:
             self._sort_mode = "newest"
-            self.sort_btn.setText("Sort: Newest first↓")
+            self.sort_btn.setText("Sort: Newest first ↓")
         self._rebuild_cards()
 
     def _on_search_changed(self, text: str) -> None:

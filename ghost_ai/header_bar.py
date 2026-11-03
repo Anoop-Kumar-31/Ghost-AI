@@ -64,7 +64,6 @@ class ChatTab(QFrame):
         self.close_btn.setFixedSize(16, 16)
         self.close_btn.setCursor(Qt.CursorShape.ArrowCursor)
         self.close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.close_btn.setToolTip("Close tab")
         self.close_btn.setIcon(get_icon("x", 10, COLOR_DEFAULT))
         self.close_btn.setIconSize(QSize(10, 10))
         self.close_btn.clicked.connect(self._on_close_clicked)
@@ -212,9 +211,9 @@ class HeaderBar(QWidget):
             "house",
             size=16,
             btn_size=30,
-            tooltip="Your conversations (Ctrl+H)",
             parent=self,
         )
+        self.home_clicked_signal = self.home_clicked
         self.home_btn.clicked.connect(self.home_clicked.emit)
         layout.addWidget(self.home_btn)
 
@@ -231,7 +230,6 @@ class HeaderBar(QWidget):
             "plus",
             size=14,
             btn_size=26,
-            tooltip="New conversation (Ctrl+N)",
             parent=self,
         )
         self.new_tab_btn.setStyleSheet(
@@ -257,7 +255,6 @@ class HeaderBar(QWidget):
             "settings",
             size=16,
             btn_size=30,
-            tooltip="Settings & API Key (Ctrl+,)",
             parent=self,
         )
         self.settings_btn.clicked.connect(self.settings_clicked.emit)

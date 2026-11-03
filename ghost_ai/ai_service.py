@@ -7,11 +7,43 @@ Runs in a background QThread to keep the UI completely non-blocking and responsi
 
 import json
 import logging
+import threading
 from typing import List, Dict, Any, Optional
 import requests
 from PySide6.QtCore import QThread, Signal
 
 logger = logging.getLogger(__name__)
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough character-based token estimation (~4 chars per token)."""
+    return max(1, len(text) // 4)
+
+
+def trim_conversation(
+    raw_messages: List[Dict[str, Any]],
+    max_budget_tokens: int = 12000,
+) -> List[Dict[str, Any]]:
+    """
+    Trim older messages when the conversation exceeds token budget.
+    Always preserves the most recent messages.
+    """
+    if not raw_messages:
+        return []
+
+    # Calculate token count from newest to oldest
+    total_tokens = 0
+    kept_reversed: List[Dict[str, Any]] = []
+
+    for msg in reversed(raw_messages):
+        content = msg.get("content", "")
+        tokens = estimate_tokens(content)
+        if kept_reversed and (total_tokens + tokens > max_budget_tokens):
+            break
+        kept_reversed.append(msg)
+        total_tokens += tokens
+
+    return list(reversed(kept_reversed))
 
 
 def format_messages_for_openai(
@@ -46,27 +78,46 @@ def format_messages_for_anthropic(
 class AIChatWorker(QThread):
     """
     Background worker thread that communicates with the LLM API.
-    Emits chunk_received for real-time streaming, finished when complete, or error.
+    Emits chunk_received for real-time streaming, response_finished when complete,
+    cancelled when aborted with partial content, or error.
     """
 
-    chunk_received = Signal(str)
+    chunk_received = Signal(str, str)         # (request_id, chunk)
+    response_finished = Signal(str, str)      # (request_id, full_response)
+    cancelled = Signal(str, str)              # (request_id, partial_response)
+    error = Signal(str, str)                  # (request_id, error_message)
+
+    # Backward compatibility signal for existing tests / callers
     finished = Signal(str)
-    error = Signal(str)
 
     def __init__(
         self,
         messages: List[Dict[str, Any]],
         config: Dict[str, Any],
         parent: Optional[Any] = None,
+        request_id: str = "",
     ):
         super().__init__(parent)
+        self.request_id = request_id
         self.messages = messages
         self.config = config
-        self._is_cancelled = False
+        self._cancel_event = threading.Event()
+        self._response: Optional[requests.Response] = None
+        self._response_lock = threading.Lock()
 
     def cancel(self) -> None:
-        """Cancel the ongoing request."""
-        self._is_cancelled = True
+        """Thread-safe cancellation of the ongoing request and underlying HTTP socket."""
+        self._cancel_event.set()
+        with self._response_lock:
+            if self._response is not None:
+                try:
+                    self._response.close()
+                except Exception:
+                    pass
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self._cancel_event.is_set()
 
     def run(self) -> None:
         api_key = str(self.config.get("api_key", "")).strip()
@@ -75,28 +126,34 @@ class AIChatWorker(QThread):
         provider = str(self.config.get("provider", "OpenAI"))
         system_prompt = str(self.config.get("system_prompt", ""))
         temperature = float(self.config.get("temperature", 0.7))
+        max_tokens = int(self.config.get("max_tokens", 2048))
         stream = bool(self.config.get("stream", True))
 
         # Check for API key (Ollama local may not need one)
         is_local = "localhost" in base_url or "127.0.0.1" in base_url
         if not api_key and not is_local:
-            self.error.emit(
-                "API Key is missing!\n\nPlease click ⚙ Settings in the top bar to configure your API key."
-            )
+            err = "API Key is missing!\n\nPlease click ⚙ Settings in the top bar to configure your API key."
+            self.error.emit(self.request_id, err)
             return
 
         try:
             if provider == "Anthropic" or "anthropic.com" in base_url:
-                self._run_anthropic(base_url, api_key, model, system_prompt, temperature, stream)
+                self._run_anthropic(base_url, api_key, model, system_prompt, temperature, max_tokens, stream)
             else:
-                self._run_openai_compatible(base_url, api_key, model, system_prompt, temperature, stream)
+                self._run_openai_compatible(base_url, api_key, model, system_prompt, temperature, max_tokens, stream)
         except requests.exceptions.Timeout:
-            self.error.emit("Request timed out. Please check your network connection.")
+            if not self._cancel_event.is_set():
+                self.error.emit(self.request_id, "Request timed out. Please check your network connection.")
         except requests.exceptions.ConnectionError:
-            self.error.emit(f"Failed to connect to {base_url}. Please check your connection or endpoint settings.")
+            if not self._cancel_event.is_set():
+                self.error.emit(self.request_id, f"Failed to connect to {base_url}. Please check your connection or endpoint settings.")
         except Exception as e:
-            logger.exception("AI generation error: %s", e)
-            self.error.emit(f"Error communicating with AI: {str(e)}")
+            if not self._cancel_event.is_set():
+                logger.exception("AI generation error: %s", e)
+                self.error.emit(self.request_id, f"Error communicating with AI: {str(e)}")
+        finally:
+            with self._response_lock:
+                self._response = None
 
     def _run_openai_compatible(
         self,
@@ -105,6 +162,7 @@ class AIChatWorker(QThread):
         model: str,
         system_prompt: str,
         temperature: float,
+        max_tokens: int,
         stream: bool,
     ) -> None:
         """Call standard OpenAI-compatible /chat/completions endpoint."""
@@ -117,63 +175,81 @@ class AIChatWorker(QThread):
             headers["HTTP-Referer"] = "https://github.com/Anoop-Kumar-31/Ghost-AI"
             headers["X-Title"] = "Ghost AI"
 
-        formatted_msgs = format_messages_for_openai(self.messages, system_prompt)
+        # Apply conversation context limit before formatting
+        trimmed = trim_conversation(self.messages, max_budget_tokens=12000)
+        formatted_msgs = format_messages_for_openai(trimmed, system_prompt)
         payload = {
             "model": model,
             "messages": formatted_msgs,
             "temperature": temperature,
+            "max_tokens": max_tokens,
             "stream": stream,
         }
 
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            stream=stream,
-            timeout=(10, 60),
-        )
-        response.encoding = "utf-8"
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                stream=stream,
+                timeout=(10, 20),
+            )
+            with self._response_lock:
+                self._response = resp
+        except Exception as e:
+            if self._cancel_event.is_set():
+                return
+            raise e
 
-        if response.status_code != 200:
-            self._handle_http_error(response)
+        resp.encoding = "utf-8"
+
+        if resp.status_code != 200:
+            self._handle_http_error(resp)
             return
 
-        accumulated = []
+        accumulated: List[str] = []
         if stream:
-            for raw_line in response.iter_lines():
-                if self._is_cancelled:
-                    break
-                if not raw_line:
-                    continue
-                if isinstance(raw_line, bytes):
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                else:
-                    line = str(raw_line).strip()
-                if line.startswith("data: "):
-                    data_str = line[6:].strip()
-                    if data_str == "[DONE]":
+            try:
+                for raw_line in resp.iter_lines():
+                    if self._cancel_event.is_set():
                         break
-                    try:
-                        chunk_obj = json.loads(data_str)
-                        choices = chunk_obj.get("choices", [])
-                        if choices:
-                            delta = choices[0].get("delta", {})
-                            content = delta.get("content", "")
-                            if content:
-                                accumulated.append(content)
-                                self.chunk_received.emit(content)
-                    except json.JSONDecodeError:
+                    if not raw_line:
                         continue
+                    if isinstance(raw_line, bytes):
+                        line = raw_line.decode("utf-8", errors="replace").strip()
+                    else:
+                        line = str(raw_line).strip()
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk_obj = json.loads(data_str)
+                            choices = chunk_obj.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    accumulated.append(content)
+                                    self.chunk_received.emit(self.request_id, content)
+                        except json.JSONDecodeError:
+                            continue
+            except Exception:
+                if not self._cancel_event.is_set():
+                    raise
         else:
-            data = response.json()
+            data = resp.json()
             choices = data.get("choices", [])
             if choices:
                 content = choices[0].get("message", {}).get("content", "")
                 accumulated.append(content)
-                self.chunk_received.emit(content)
+                self.chunk_received.emit(self.request_id, content)
 
         full_text = "".join(accumulated)
-        if not self._is_cancelled:
+        if self._cancel_event.is_set():
+            self.cancelled.emit(self.request_id, full_text)
+        else:
+            self.response_finished.emit(self.request_id, full_text)
             self.finished.emit(full_text)
 
     def _run_anthropic(
@@ -183,6 +259,7 @@ class AIChatWorker(QThread):
         model: str,
         system_prompt: str,
         temperature: float,
+        max_tokens: int,
         stream: bool,
     ) -> None:
         """Call Anthropic /v1/messages endpoint."""
@@ -193,67 +270,83 @@ class AIChatWorker(QThread):
             "anthropic-version": "2023-06-01",
         }
 
-        formatted_msgs = format_messages_for_anthropic(self.messages)
+        trimmed = trim_conversation(self.messages, max_budget_tokens=12000)
+        formatted_msgs = format_messages_for_anthropic(trimmed)
         payload = {
             "model": model,
             "messages": formatted_msgs,
-            "max_tokens": 2048,
+            "max_tokens": max_tokens,
             "temperature": temperature,
             "stream": stream,
         }
         if system_prompt:
             payload["system"] = system_prompt
 
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            stream=stream,
-            timeout=(10, 60),
-        )
-        response.encoding = "utf-8"
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                stream=stream,
+                timeout=(10, 20),
+            )
+            with self._response_lock:
+                self._response = resp
+        except Exception as e:
+            if self._cancel_event.is_set():
+                return
+            raise e
 
-        if response.status_code != 200:
-            self._handle_http_error(response)
+        resp.encoding = "utf-8"
+
+        if resp.status_code != 200:
+            self._handle_http_error(resp)
             return
 
-        accumulated = []
+        accumulated: List[str] = []
         if stream:
-            for raw_line in response.iter_lines():
-                if self._is_cancelled:
-                    break
-                if not raw_line:
-                    continue
-                if isinstance(raw_line, bytes):
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                else:
-                    line = str(raw_line).strip()
-                if line.startswith("data: "):
-                    data_str = line[6:].strip()
-                    try:
-                        chunk_obj = json.loads(data_str)
-                        event_type = chunk_obj.get("type")
-                        if event_type == "content_block_delta":
-                            delta = chunk_obj.get("delta", {})
-                            text = delta.get("text", "")
-                            if text:
-                                accumulated.append(text)
-                                self.chunk_received.emit(text)
-                        elif event_type == "message_stop":
-                            break
-                    except json.JSONDecodeError:
+            try:
+                for raw_line in resp.iter_lines():
+                    if self._cancel_event.is_set():
+                        break
+                    if not raw_line:
                         continue
+                    if isinstance(raw_line, bytes):
+                        line = raw_line.decode("utf-8", errors="replace").strip()
+                    else:
+                        line = str(raw_line).strip()
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        try:
+                            chunk_obj = json.loads(data_str)
+                            event_type = chunk_obj.get("type")
+                            if event_type == "content_block_delta":
+                                delta = chunk_obj.get("delta", {})
+                                text = delta.get("text", "")
+                                if text:
+                                    accumulated.append(text)
+                                    self.chunk_received.emit(self.request_id, text)
+                            elif event_type == "message_stop":
+                                break
+                        except json.JSONDecodeError:
+                            continue
+            except Exception:
+                if not self._cancel_event.is_set():
+                    raise
         else:
-            data = response.json()
+            data = resp.json()
             content_blocks = data.get("content", [])
             for block in content_blocks:
                 if block.get("type") == "text":
                     text = block.get("text", "")
                     accumulated.append(text)
-                    self.chunk_received.emit(text)
+                    self.chunk_received.emit(self.request_id, text)
 
         full_text = "".join(accumulated)
-        if not self._is_cancelled:
+        if self._cancel_event.is_set():
+            self.cancelled.emit(self.request_id, full_text)
+        else:
+            self.response_finished.emit(self.request_id, full_text)
             self.finished.emit(full_text)
 
     def _handle_http_error(self, response: requests.Response) -> None:
@@ -282,4 +375,5 @@ class AIChatWorker(QThread):
         else:
             msg = f"API Error (Status {status}):\n{err_msg or response.reason}"
 
-        self.error.emit(msg)
+        self.error.emit(self.request_id, msg)
+

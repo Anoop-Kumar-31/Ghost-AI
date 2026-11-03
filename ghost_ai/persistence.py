@@ -8,6 +8,7 @@ or ~/.config/ghost_ai/chats.json on macOS/Linux.
 import os
 import json
 import uuid
+import copy
 import tempfile
 import logging
 from datetime import datetime
@@ -24,6 +25,7 @@ MIN_HEIGHT = 420
 
 DEFAULT_DATA: Dict[str, Any] = {
     "chats": [],
+    "open_tabs": [],
     "active_chat_id": None,
     "view_mode": "grid",
     "current_view": "home",
@@ -83,29 +85,40 @@ def load_data(storage_path: Optional[Path] = None) -> Dict[str, Any]:
     try:
         if not path.is_file():
             logger.info("Storage file not found at %s. Using default state.", path)
-            return dict(DEFAULT_DATA)
+            return copy.deepcopy(DEFAULT_DATA)
 
         with open(path, "r", encoding="utf-8") as f:
             content = f.read().strip()
             if not content:
                 logger.warning("Storage file at %s is empty. Using defaults.", path)
-                return dict(DEFAULT_DATA)
+                return copy.deepcopy(DEFAULT_DATA)
             data = json.loads(content)
 
         if not isinstance(data, dict):
             logger.warning("Storage JSON is not an object. Using defaults.")
-            return dict(DEFAULT_DATA)
+            return copy.deepcopy(DEFAULT_DATA)
 
-        result = dict(DEFAULT_DATA)
+        result = copy.deepcopy(DEFAULT_DATA)
 
         # Handle chats
         if "chats" in data and isinstance(data["chats"], list):
-            result["chats"] = data["chats"]
+            result["chats"] = [c for c in data["chats"] if isinstance(c, dict) and "id" in c]
         else:
             result["chats"] = []
 
-        if "active_chat_id" in data and isinstance(data["active_chat_id"], str):
+        valid_ids = {c["id"] for c in result["chats"]}
+
+        # Handle open tabs: validate against valid chat IDs
+        if "open_tabs" in data and isinstance(data["open_tabs"], list):
+            result["open_tabs"] = [tid for tid in data["open_tabs"] if tid in valid_ids]
+        else:
+            result["open_tabs"] = [c["id"] for c in result["chats"][:3]] if result["chats"] else []
+
+        # Handle active_chat_id: must be a valid existing chat
+        if "active_chat_id" in data and data["active_chat_id"] in valid_ids:
             result["active_chat_id"] = data["active_chat_id"]
+        elif result["open_tabs"]:
+            result["active_chat_id"] = result["open_tabs"][0]
         elif result["chats"]:
             result["active_chat_id"] = result["chats"][0].get("id")
 
@@ -130,7 +143,7 @@ def load_data(storage_path: Optional[Path] = None) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error("Error reading storage file %s: %s. Using defaults.", path, e)
-        return dict(DEFAULT_DATA)
+        return copy.deepcopy(DEFAULT_DATA)
 
 
 def save_data(data: Dict[str, Any], storage_path: Optional[Path] = None) -> bool:
