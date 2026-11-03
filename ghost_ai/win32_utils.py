@@ -219,9 +219,20 @@ def set_capture_excluded(hwnd: int, enable: bool = True) -> bool:
         return False
 
 
-def is_capture_excluded(hwnd: int) -> bool:
+def get_capture_affinity(hwnd: int) -> int:
+    """Return the exact window display affinity DWORD value or WDA_NONE."""
     if sys.platform != "win32" or not _GetWindowDisplayAffinity:
-        return False
+        return WDA_NONE
     out = wintypes.DWORD(0)
     ok = _GetWindowDisplayAffinity(wintypes.HWND(hwnd), ctypes.byref(out))
-    return bool(ok) and out.value != WDA_NONE
+    return out.value if ok else WDA_NONE
+
+
+def is_capture_excluded(hwnd: int) -> bool:
+    """
+    Exact verification: returns True only if window display affinity is strictly
+    WDA_EXCLUDEFROMCAPTURE (0x11). Does not treat partial WDA_MONITOR as full exclusion.
+    """
+    if sys.platform != "win32":
+        return False
+    return get_capture_affinity(hwnd) == WDA_EXCLUDEFROMCAPTURE

@@ -1,14 +1,14 @@
 """
-Persistence module for Ghost AI.
-Handles atomic saving, loading, and geometry validation for multi-chat sessions and settings.
-Stores data in %LOCALAPPDATA%\\GhostAI\\chats.json on Windows
-or ~/.config/ghost_ai/chats.json on macOS/Linux.
+Persistence module for Ghost AI with authenticated encryption at rest (Fernet AES-128-CBC + HMAC-SHA256).
+Handles atomic saving, loading, geometry validation, and migration of legacy plaintext data.
+Encrypted files are identified by the header prefix: GHOSTAI-ENC-V1:
 """
 
 import os
 import json
 import uuid
 import copy
+import shutil
 import tempfile
 import logging
 from datetime import datetime
@@ -16,7 +16,14 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from PySide6.QtGui import QGuiApplication
 
+from .secure_store import (
+    get_or_create_history_encryption_key,
+    MissingEncryptionKeyError,
+)
+
 logger = logging.getLogger(__name__)
+
+ENC_MAGIC_PREFIX = b"GHOSTAI-ENC-V1:"
 
 DEFAULT_WIDTH = 700
 DEFAULT_HEIGHT = 700
@@ -39,8 +46,13 @@ DEFAULT_DATA: Dict[str, Any] = {
 }
 
 
+def _get_fernet(key: bytes):
+    from cryptography.fernet import Fernet
+    return Fernet(key)
+
+
 def get_default_storage_path() -> Path:
-    """Return the default JSON storage file path (%LOCALAPPDATA%\\GhostAI\\chats.json on Windows)."""
+    """Return the default storage file path (%LOCALAPPDATA%\\GhostAI\\chats.dat or chats.json on Windows)."""
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
         base_dir = Path(local_app_data)
@@ -77,9 +89,9 @@ def create_chat_dict(title: str = "New Chat") -> Dict[str, Any]:
 
 def load_data(storage_path: Optional[Path] = None) -> Dict[str, Any]:
     """
-    Load chat sessions and geometry from disk.
-    Returns default data if file is missing, empty, or malformed.
-    Never raises an exception or corrupts/deletes existing files.
+    Load chat sessions and geometry from disk with authenticated decryption.
+    Detects and safely migrates legacy plaintext files.
+    NEVER overwrites or erases unreadable encrypted files with default data.
     """
     path = storage_path or get_default_storage_path()
     try:
@@ -87,12 +99,43 @@ def load_data(storage_path: Optional[Path] = None) -> Dict[str, Any]:
             logger.info("Storage file not found at %s. Using default state.", path)
             return copy.deepcopy(DEFAULT_DATA)
 
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            if not content:
-                logger.warning("Storage file at %s is empty. Using defaults.", path)
-                return copy.deepcopy(DEFAULT_DATA)
-            data = json.loads(content)
+        with open(path, "rb") as f:
+            raw_bytes = f.read().strip()
+
+        if not raw_bytes:
+            logger.warning("Storage file at %s is empty. Using defaults.", path)
+            return copy.deepcopy(DEFAULT_DATA)
+
+        # Check for encrypted file header
+        if raw_bytes.startswith(ENC_MAGIC_PREFIX):
+            cipher_payload = raw_bytes[len(ENC_MAGIC_PREFIX):]
+            # Must NOT create a new key when decrypting existing encrypted data!
+            key = get_or_create_history_encryption_key(allow_create=False)
+            fernet = _get_fernet(key)
+            try:
+                decrypted_bytes = fernet.decrypt(cipher_payload)
+            except Exception as e:
+                logger.critical("Failed to decrypt chat history at %s (Invalid key or data corruption): %s", path, e)
+                raise ValueError(
+                    f"Unable to decrypt chat history file '{path.name}'. "
+                    "The encryption key does not match or the data is corrupt. "
+                    "File has NOT been overwritten."
+                ) from e
+            json_text = decrypted_bytes.decode("utf-8")
+            data = json.loads(json_text)
+        else:
+            # Legacy plaintext JSON file detected -> parse and prepare for encrypted migration
+            logger.info("Legacy plaintext chat history detected at %s. Migrating to encrypted storage.", path)
+            json_text = raw_bytes.decode("utf-8")
+            data = json.loads(json_text)
+            # Create a backup before migration
+            backup_path = path.with_suffix(".json.bak")
+            if not backup_path.exists():
+                try:
+                    shutil.copy2(path, backup_path)
+                    logger.info("Plaintext backup created at %s", backup_path)
+                except Exception as be:
+                    logger.warning("Could not create migration backup: %s", be)
 
         if not isinstance(data, dict):
             logger.warning("Storage JSON is not an object. Using defaults.")
@@ -141,35 +184,46 @@ def load_data(storage_path: Optional[Path] = None) -> Dict[str, Any]:
         result["ghost_mode"] = bool(data.get("ghost_mode", False))
         return result
 
-    except Exception as e:
-        logger.error("Error reading storage file %s: %s. Using defaults.", path, e)
+    except MissingEncryptionKeyError:
+        logger.critical("Encrypted history key missing from credential store for %s. Aborting load to protect file.", path)
+        raise
+    except json.JSONDecodeError as e:
+        logger.error("JSON decode error in storage file %s: %s", path, e)
         return copy.deepcopy(DEFAULT_DATA)
+    except Exception as e:
+        logger.error("Error reading storage file %s: %s", path, e)
+        raise
 
 
 def save_data(data: Dict[str, Any], storage_path: Optional[Path] = None) -> bool:
     """
-    Safely and atomically persist chat data to disk.
-    Writes to a temporary file first, then atomically replaces the target file.
+    Safely and atomically persist chat data to disk using Fernet encryption.
+    Writes encrypted payload to a temporary file, then atomically replaces target.
     """
     path = storage_path or get_default_storage_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        key = get_or_create_history_encryption_key(allow_create=True)
+        fernet = _get_fernet(key)
+
+        serialized = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
+        encrypted_payload = fernet.encrypt(serialized)
+
         temp_dir = path.parent
         with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
+            mode="wb",
             dir=str(temp_dir),
             delete=False,
             suffix=".tmp",
         ) as tf:
-            json.dump(data, tf, indent=2, ensure_ascii=False)
+            tf.write(ENC_MAGIC_PREFIX + encrypted_payload)
             temp_path = Path(tf.name)
 
         temp_path.replace(path)
-        logger.info("Chat data saved successfully to %s", path)
+        logger.info("Chat data encrypted and saved successfully to %s", path)
         return True
     except Exception as e:
-        logger.critical("Failed to save chat data to %s: %s", path, e)
+        logger.critical("Failed to save encrypted chat data to %s: %s", path, e)
         return False
 
 
@@ -188,7 +242,6 @@ def sanitize_geometry(
 
     screens = QGuiApplication.screens()
     if not screens or x is None or y is None:
-        # Default fallback to center of primary screen
         if screens:
             primary_geo = screens[0].availableGeometry()
             px = primary_geo.x() + (primary_geo.width() - w) // 2
@@ -196,11 +249,11 @@ def sanitize_geometry(
             return px, py, w, h
         return 100, 100, w, h
 
-    # Check if the title bar area (top 40px) is visible on any screen
+    from PySide6.QtCore import QRect
     is_visible = False
     for screen in screens:
         geo = screen.availableGeometry()
-        if geo.intersects(QRect_from_coords(x, y, min(w, 100), 40)):
+        if geo.intersects(QRect(x, y, min(w, 100), 40)):
             is_visible = True
             break
 
@@ -210,9 +263,3 @@ def sanitize_geometry(
         y = primary_geo.y() + (primary_geo.height() - h) // 2
 
     return x, y, w, h
-
-
-def QRect_from_coords(x: int, y: int, w: int, h: int):
-    """Helper to construct QRect without importing QRect top-level if needed."""
-    from PySide6.QtCore import QRect
-    return QRect(x, y, w, h)

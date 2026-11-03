@@ -115,3 +115,30 @@ def test_render_full_html():
     assert "<!DOCTYPE html>" in full
     assert "<style>" in full
     assert "<strong>QueueFlow</strong>" in full
+
+
+def test_code_fence_metadata_and_aliases():
+    """Verify code fences with extra metadata (e.g. title) and aliases parse correctly."""
+    md = '```python title="main.py"\ndef main():\n    pass\n```'
+    html = render_markdown(md)
+    assert 'class="code-block-box"' in html
+    assert '>PYTHON<' in html
+    assert "main" in html
+    assert "pass" in html
+
+    # Test alias resolution
+    md_cpp = '```c++\nint main() { return 0; }\n```'
+    html_cpp = render_markdown(md_cpp)
+    assert '>C++<' in html_cpp
+
+    md_sql = '```postgresql\nSELECT * FROM users;\n```'
+    html_sql = render_markdown(md_sql)
+    assert '>POSTGRESQL<' in html_sql
+
+
+def test_code_fence_label_html_escaping():
+    """Verify malicious or HTML-like code fence labels are escaped in header."""
+    md = '```<script>alert(1)</script>\nx = 1\n```'
+    html = render_markdown(md)
+    assert '<script>' not in html
+    assert '&lt;SCRIPT&gt;' in html or '&lt;script&gt;' in html

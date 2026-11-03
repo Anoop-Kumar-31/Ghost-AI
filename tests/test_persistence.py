@@ -109,8 +109,10 @@ def test_atomic_save_behavior(tmp_path: Path):
     tmp_files = list((tmp_path / "subdir").glob("*.tmp"))
     assert len(tmp_files) == 0
 
-    # Verify valid JSON
-    with open(target_file, "r", encoding="utf-8") as f:
-        parsed = json.load(f)
-        assert len(parsed["chats"]) == 1
-        assert parsed["chats"][0]["title"] == "Test Chat"
+    # Verify encrypted storage and integrity
+    raw_content = target_file.read_bytes()
+    assert raw_content.startswith(b"GHOSTAI-ENC-V1:")
+
+    parsed = load_data(target_file)
+    assert len(parsed["chats"]) == 1
+    assert parsed["chats"][0]["title"] == "Test Chat"

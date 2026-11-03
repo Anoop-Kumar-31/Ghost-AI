@@ -46,6 +46,12 @@ coverage.xml
 .mypy_cache/
 .ruff_cache/
 
+# Ghost AI local state, credentials, & backup files
+config.json
+data.json
+*.json.bak
+*.bak
+
 # Logs and runtime artifacts
 *.log
 *.tmp

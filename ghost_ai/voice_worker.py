@@ -60,12 +60,12 @@ def _resample_audio(audio: np.ndarray, orig_sr: int, target_sr: int = 16_000) ->
         return np.interp(x_target, x_orig, audio).astype(np.float32)
 
 
-def _transcribe_audio(audio_np: np.ndarray, sample_rate: int = 16_000) -> str:
+def _transcribe_audio(audio_np: np.ndarray, sample_rate: int = 16_000, cancel_event: Optional[threading.Event] = None) -> str:
     """
     Transcribes audio array directly in memory via faster-whisper.
-    Bypasses PyAV file decoding entirely to prevent metadata_errors compatibility issues.
+    Checks cancel_event cooperatively between segments.
     """
-    if audio_np is None or len(audio_np) == 0:
+    if audio_np is None or len(audio_np) == 0 or (cancel_event and cancel_event.is_set()):
         return ""
 
     # Ensure mono float32
@@ -79,7 +79,13 @@ def _transcribe_audio(audio_np: np.ndarray, sample_rate: int = 16_000) -> str:
 
     model = _get_whisper()
     segments, _ = model.transcribe(audio_np, beam_size=5, language=None, vad_filter=True)
-    return " ".join(s.text.strip() for s in segments).strip()
+    
+    collected = []
+    for s in segments:
+        if cancel_event and cancel_event.is_set():
+            return ""
+        collected.append(s.text.strip())
+    return " ".join(collected).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -90,11 +96,12 @@ class MicVoiceWorker(QThread):
     """
     Records the default microphone using non-blocking audio callbacks until stop()
     is called, then transcribes locally via faster-whisper.
+    Supports cooperative cancellation via cancel() to discard audio.
 
     Signals:
         transcribed(str) -- final transcript
         error(str)       -- error message
-        status(str)      -- 'recording' | 'transcribing' | 'done'
+        status(str)      -- 'recording' | 'transcribing' | 'done' | 'cancelled'
     """
 
     transcribed = Signal(str)
@@ -104,11 +111,18 @@ class MicVoiceWorker(QThread):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._stop_flag = threading.Event()
+        self._cancel_event = threading.Event()
         self._frames: List[np.ndarray] = []
 
     def stop(self):
-        """Signal recording loop to end and begin transcription."""
+        """Signal recording loop to end and proceed to transcription."""
         self._stop_flag.set()
+
+    def cancel(self):
+        """Signal recording loop to end, discard audio, and abort transcription."""
+        self._cancel_event.set()
+        self._stop_flag.set()
+        self._frames.clear()
 
     def run(self):
         if np is None:
@@ -122,6 +136,7 @@ class MicVoiceWorker(QThread):
             return
 
         self._stop_flag.clear()
+        self._cancel_event.clear()
         self._frames = []
         self.status.emit("recording")
         logger.info("MicVoiceWorker: recording started")
@@ -144,6 +159,8 @@ class MicVoiceWorker(QThread):
 
         def audio_callback(indata, frames, time_info, status_flags):
             nonlocal total_frames
+            if self._stop_flag.is_set() or self._cancel_event.is_set():
+                return
             if status_flags:
                 logger.warning("Mic status: %s", status_flags)
             remaining = max_allowed_frames - total_frames
@@ -164,11 +181,16 @@ class MicVoiceWorker(QThread):
                 dtype="float32",
                 callback=audio_callback,
             ):
-                while not self._stop_flag.is_set():
+                while not self._stop_flag.is_set() and not self._cancel_event.is_set():
                     self.msleep(50)
         except Exception as exc:
             logger.error("MicVoiceWorker recording error: %s", exc)
             self.error.emit(f"Microphone recording failed: {exc}")
+            return
+
+        if self._cancel_event.is_set():
+            self._frames.clear()
+            self.status.emit("cancelled")
             return
 
         if not self._frames:
@@ -183,18 +205,22 @@ class MicVoiceWorker(QThread):
             if audio.ndim > 1 and audio.shape[1] > 1:
                 audio = audio.mean(axis=1)
             audio = audio.flatten()
-            text = _transcribe_audio(audio, sample_rate)
-            logger.info("MicVoiceWorker transcript generated (%d characters)", len(text))
-            if text:
-                self.transcribed.emit(text)
+            text = _transcribe_audio(audio, sample_rate, cancel_event=self._cancel_event)
+            if not self._cancel_event.is_set():
+                logger.info("MicVoiceWorker transcript generated (%d characters)", len(text))
+                if text:
+                    self.transcribed.emit(text)
         except Exception as exc:
-            logger.error("MicVoiceWorker transcription error: %s", exc)
-            self.error.emit(f"Transcription error: {exc}")
+            if not self._cancel_event.is_set():
+                logger.error("MicVoiceWorker transcription error: %s", exc)
+                self.error.emit(f"Transcription error: {exc}")
         finally:
             frames_to_process.clear()
+            self._frames.clear()
             if "audio" in locals():
                 del audio
-            self.status.emit("done")
+            final_status = "cancelled" if self._cancel_event.is_set() else "done"
+            self.status.emit(final_status)
 
 
 # ---------------------------------------------------------------------------
@@ -205,11 +231,12 @@ class SysAudioWorker(QThread):
     """
     Records system speaker output (WASAPI / Stereo Mix / VB-Cable) until stop() is called.
     Captures interviewer voice from Google Meet / Zoom / Microsoft Teams.
+    Supports cooperative cancellation via cancel() to discard audio.
 
     Signals:
         transcribed(str) -- final transcript
         error(str)       -- error message
-        status(str)      -- 'recording' | 'transcribing' | 'done'
+        status(str)      -- 'recording' | 'transcribing' | 'done' | 'cancelled'
     """
 
     transcribed = Signal(str)
@@ -219,11 +246,18 @@ class SysAudioWorker(QThread):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._stop_flag = threading.Event()
+        self._cancel_event = threading.Event()
         self._frames: List[np.ndarray] = []
 
     def stop(self):
         """Signal system audio recording to stop and begin transcription."""
         self._stop_flag.set()
+
+    def cancel(self):
+        """Signal system audio recording to stop, discard audio, and abort transcription."""
+        self._cancel_event.set()
+        self._stop_flag.set()
+        self._frames.clear()
 
     @staticmethod
     def find_loopback_device():
@@ -254,6 +288,7 @@ class SysAudioWorker(QThread):
             return
 
         self._stop_flag.clear()
+        self._cancel_event.clear()
         self._frames = []
 
         dev_idx, dev_info = self.find_loopback_device()
@@ -279,6 +314,8 @@ class SysAudioWorker(QThread):
 
         def audio_callback(indata, frames, time_info, status_flags):
             nonlocal total_frames
+            if self._stop_flag.is_set() or self._cancel_event.is_set():
+                return
             remaining = max_allowed_frames - total_frames
             if remaining <= 0:
                 self._stop_flag.set()
@@ -298,11 +335,16 @@ class SysAudioWorker(QThread):
                 dtype="float32",
                 callback=audio_callback,
             ):
-                while not self._stop_flag.is_set():
+                while not self._stop_flag.is_set() and not self._cancel_event.is_set():
                     self.msleep(50)
         except Exception as exc:
             logger.error("SysAudioWorker recording error: %s", exc)
             self.error.emit(f"System audio capture failed: {exc}")
+            return
+
+        if self._cancel_event.is_set():
+            self._frames.clear()
+            self.status.emit("cancelled")
             return
 
         if not self._frames:
@@ -317,15 +359,19 @@ class SysAudioWorker(QThread):
             if audio.ndim > 1 and audio.shape[1] > 1:
                 audio = audio.mean(axis=1)
             audio = audio.flatten()
-            text = _transcribe_audio(audio, sample_rate)
-            logger.info("SysAudioWorker transcript generated (%d characters)", len(text))
-            if text:
-                self.transcribed.emit(text)
+            text = _transcribe_audio(audio, sample_rate, cancel_event=self._cancel_event)
+            if not self._cancel_event.is_set():
+                logger.info("SysAudioWorker transcript generated (%d characters)", len(text))
+                if text:
+                    self.transcribed.emit(text)
         except Exception as exc:
-            logger.error("SysAudioWorker transcription error: %s", exc)
-            self.error.emit(f"Transcription error: {exc}")
+            if not self._cancel_event.is_set():
+                logger.error("SysAudioWorker transcription error: %s", exc)
+                self.error.emit(f"Transcription error: {exc}")
         finally:
             frames_to_process.clear()
+            self._frames.clear()
             if "audio" in locals():
                 del audio
-            self.status.emit("done")
+            final_status = "cancelled" if self._cancel_event.is_set() else "done"
+            self.status.emit(final_status)

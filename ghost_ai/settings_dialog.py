@@ -296,16 +296,16 @@ class SettingsDialog(QDialog):
 
         test_messages = [{"role": "user", "content": "ping"}]
         self._test_worker = AIChatWorker(test_messages, test_config)
-        self._test_worker.finished.connect(self._on_test_success)
+        self._test_worker.response_finished.connect(self._on_test_success)
         self._test_worker.error.connect(self._on_test_error)
         self._test_worker.start()
 
-    def _on_test_success(self, response: str) -> None:
+    def _on_test_success(self, request_id: str, response: str) -> None:
         self.test_btn.setEnabled(True)
         self.status_lbl.setStyleSheet("font-size: 10px; color: #4ade80;")
         self.status_lbl.setText("✓ Connection successful! AI is ready.")
 
-    def _on_test_error(self, err_msg: str) -> None:
+    def _on_test_error(self, request_id: str, err_msg: str) -> None:
         self.test_btn.setEnabled(True)
         self.status_lbl.setStyleSheet("font-size: 10px; color: #f87171;")
         short_err = err_msg.splitlines()[0] if err_msg else "Unknown error"
@@ -316,7 +316,7 @@ class SettingsDialog(QDialog):
         if self._test_worker and self._test_worker.isRunning():
             try:
                 self._test_worker.cancel()
-                self._test_worker.wait(500)
+                self._test_worker.wait(1000)
             except Exception:
                 pass
 

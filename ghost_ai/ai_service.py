@@ -12,7 +12,20 @@ from typing import List, Dict, Any, Optional
 import requests
 from PySide6.QtCore import QThread, Signal
 
+from .config import validate_endpoint_url
+
 logger = logging.getLogger(__name__)
+
+
+class RequestCancelled(Exception):
+    """Raised when an active AI generation request is cancelled cooperatively."""
+    pass
+
+
+class ContextBudgetExceededError(Exception):
+    """Raised when context calculation leaves no available tokens for generation."""
+    pass
+
 
 # Known model context window limits (tokens)
 MODEL_CONTEXT_LIMITS: Dict[str, int] = {
@@ -32,8 +45,10 @@ MODEL_CONTEXT_LIMITS: Dict[str, int] = {
 }
 
 
-def get_model_context_limit(model_name: str) -> int:
+def get_model_context_limit(model_name: str, config_limit: Optional[int] = None) -> int:
     """Return model context token limit or safe fallback."""
+    if config_limit and config_limit > 0:
+        return config_limit
     model_lower = model_name.lower()
     for key, limit in MODEL_CONTEXT_LIMITS.items():
         if key in model_lower:
@@ -43,6 +58,8 @@ def get_model_context_limit(model_name: str) -> int:
 
 def estimate_tokens(text: str) -> int:
     """Rough character-based token estimation (~4 chars per token)."""
+    if not text:
+        return 0
     return max(1, len(text) // 4)
 
 
@@ -51,22 +68,28 @@ def trim_conversation(
     max_budget_tokens: int = 12000,
     system_prompt: str = "",
     output_reserve: int = 0,
+    safety_margin: int = 0,
 ) -> List[Dict[str, Any]]:
     """
-    Trim conversation history to fit within model context budget,
-    reserving space for system prompt and generated response tokens.
-    Always preserves newest messages.
+    Trim conversation history to fit strictly within model context budget,
+    reserving space for system prompt, generated output tokens, and safety margin.
+    Preserves recent complete conversation turns where possible.
+    Raises ContextBudgetExceededError if available input tokens <= 0.
     """
     if not raw_messages:
         return []
 
     system_tokens = estimate_tokens(system_prompt) if system_prompt else 0
-    total_deductions = output_reserve + system_tokens
-    if max_budget_tokens > total_deductions + 10:
-        effective_budget = max(10, max_budget_tokens - total_deductions)
-    else:
-        effective_budget = max_budget_tokens
+    total_deductions = output_reserve + system_tokens + safety_margin
+    available_input_tokens = max_budget_tokens - total_deductions
 
+    if available_input_tokens <= 0:
+        raise ContextBudgetExceededError(
+            f"Context budget exhausted: model limit {max_budget_tokens} tokens is insufficient "
+            f"for requested output ({output_reserve}) + system prompt ({system_tokens}) + safety margin ({safety_margin})."
+        )
+
+    effective_budget = available_input_tokens
     total_tokens = 0
     kept_reversed: List[Dict[str, Any]] = []
 
@@ -74,10 +97,10 @@ def trim_conversation(
         content = msg.get("content", "")
         tokens = estimate_tokens(content)
 
-        # If the latest message alone exceeds effective budget, truncate it to fit
+        # If the latest user message alone exceeds effective budget, truncate it explicitly
         if i == 0 and tokens > effective_budget:
-            char_budget = max(100, effective_budget * 4)
-            truncated_content = content[:char_budget] + "\n...[truncated for context budget]"
+            char_budget = max(40, (effective_budget - 10) * 4)
+            truncated_content = content[:char_budget] + "\n...[truncated to fit model context limit]"
             msg_copy = dict(msg)
             msg_copy["content"] = truncated_content
             kept_reversed.append(msg_copy)
@@ -126,7 +149,7 @@ class AIChatWorker(QThread):
     Background worker thread that communicates with the LLM API.
     Emits chunk_received for real-time streaming, response_finished when complete,
     cancelled when aborted with partial content, or error.
-    Note: QThread's built-in finished() signal is preserved for thread exit detection.
+    Note: QThread's native finished() signal is preserved exclusively for thread exit detection.
     """
 
     chunk_received = Signal(str, str)         # (request_id, chunk)
@@ -148,22 +171,72 @@ class AIChatWorker(QThread):
         self._cancel_event = threading.Event()
         self._response: Optional[requests.Response] = None
         self._response_lock = threading.Lock()
+        self._accumulated_text: str = ""
 
     def cancel(self) -> None:
-        """Thread-safe cancellation of the ongoing request and underlying HTTP socket."""
+        """Thread-safe cooperative cancellation of the ongoing request and underlying HTTP socket."""
         self._cancel_event.set()
         with self._response_lock:
-            if self._response is not None:
-                try:
-                    self._response.close()
-                except Exception:
-                    pass
+            resp = self._response
+        if resp is not None:
+            try:
+                resp.close()
+            except Exception:
+                pass
 
     @property
     def is_cancelled(self) -> bool:
         return self._cancel_event.is_set()
 
+    def _execute_http_request(
+        self,
+        url: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        stream: bool,
+    ) -> requests.Response:
+        """
+        Unified safe HTTP request dispatcher with cancellation registration,
+        redirect prevention (allow_redirects=False), and bounded timeouts.
+        """
+        if self._cancel_event.is_set():
+            raise RequestCancelled()
+
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                stream=stream,
+                timeout=(5, 15),
+                allow_redirects=False,
+            )
+        except Exception:
+            if self._cancel_event.is_set():
+                raise RequestCancelled()
+            raise
+
+        with self._response_lock:
+            self._response = resp
+            cancelled = self._cancel_event.is_set()
+
+        if cancelled:
+            resp.close()
+            raise RequestCancelled()
+
+        # Reject unexpected redirects without sending credentials further
+        if resp.is_redirect:
+            resp.close()
+            raise ValueError(f"Unexpected redirect from endpoint to '{resp.headers.get('Location', '')}' rejected for security.")
+
+        resp.encoding = "utf-8"
+        return resp
+
     def run(self) -> None:
+        """
+        Sole owner of terminal signal emission (response_finished, cancelled, or error).
+        Emits exactly one terminal outcome.
+        """
         api_key = str(self.config.get("api_key", "")).strip()
         base_url = str(self.config.get("base_url", "https://api.openai.com/v1")).rstrip("/")
         model = str(self.config.get("model", "gpt-4o-mini")).strip()
@@ -172,6 +245,13 @@ class AIChatWorker(QThread):
         temperature = float(self.config.get("temperature", 0.7))
         max_tokens = int(self.config.get("max_tokens", 2048))
         stream = bool(self.config.get("stream", True))
+        trusted = set(self.config.get("trusted_custom_endpoints", []))
+
+        # Endpoint security validation
+        ok, res = validate_endpoint_url(base_url, provider=provider, trusted_endpoints=trusted)
+        if not ok:
+            self.error.emit(self.request_id, f"Security Policy Blocked Request: {res}")
+            return
 
         # Check for API key (Ollama local may not need one)
         is_local = "localhost" in base_url or "127.0.0.1" in base_url
@@ -180,24 +260,52 @@ class AIChatWorker(QThread):
             self.error.emit(self.request_id, err)
             return
 
+        self._accumulated_text = ""
+
         try:
+            if self._cancel_event.is_set():
+                raise RequestCancelled()
+
             if provider == "Anthropic" or "anthropic.com" in base_url:
-                self._run_anthropic(base_url, api_key, model, system_prompt, temperature, max_tokens, stream)
+                result_text = self._run_anthropic(base_url, api_key, model, system_prompt, temperature, max_tokens, stream)
             else:
-                self._run_openai_compatible(base_url, api_key, model, system_prompt, temperature, max_tokens, stream)
+                result_text = self._run_openai_compatible(base_url, api_key, model, system_prompt, temperature, max_tokens, stream)
+
+            if self._cancel_event.is_set():
+                self.cancelled.emit(self.request_id, self._accumulated_text)
+            else:
+                self.response_finished.emit(self.request_id, result_text)
+
+        except RequestCancelled:
+            self.cancelled.emit(self.request_id, self._accumulated_text)
+        except ContextBudgetExceededError as ce:
+            self.error.emit(self.request_id, str(ce))
         except requests.exceptions.Timeout:
-            if not self._cancel_event.is_set():
-                self.error.emit(self.request_id, "Request timed out. Please check your network connection.")
+            if self._cancel_event.is_set():
+                self.cancelled.emit(self.request_id, self._accumulated_text)
+            else:
+                self.error.emit(self.request_id, "Request timed out. Please verify network connection or endpoint availability.")
         except requests.exceptions.ConnectionError:
-            if not self._cancel_event.is_set():
-                self.error.emit(self.request_id, f"Failed to connect to {base_url}. Please check your connection or endpoint settings.")
+            if self._cancel_event.is_set():
+                self.cancelled.emit(self.request_id, self._accumulated_text)
+            else:
+                # Sanitize error message to avoid logging raw endpoints with secrets
+                self.error.emit(self.request_id, f"Failed to connect to endpoint host. Please check your connection settings.")
         except Exception as e:
-            if not self._cancel_event.is_set():
-                logger.exception("AI generation error: %s", e)
-                self.error.emit(self.request_id, f"Error communicating with AI: {str(e)}")
+            if self._cancel_event.is_set():
+                self.cancelled.emit(self.request_id, self._accumulated_text)
+            else:
+                logger.error("AI generation error: %s", type(e).__name__)
+                self.error.emit(self.request_id, f"AI Generation Error: {str(e)[:160]}")
         finally:
             with self._response_lock:
+                resp = self._response
                 self._response = None
+            if resp is not None:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
 
     def _run_openai_compatible(
         self,
@@ -208,8 +316,8 @@ class AIChatWorker(QThread):
         temperature: float,
         max_tokens: int,
         stream: bool,
-    ) -> None:
-        """Call standard OpenAI-compatible /chat/completions endpoint."""
+    ) -> str:
+        """Execute request for standard OpenAI-compatible /chat/completions endpoint."""
         url = f"{base_url}/chat/completions"
         headers = {
             "Content-Type": "application/json",
@@ -219,12 +327,6 @@ class AIChatWorker(QThread):
             headers["HTTP-Referer"] = "https://github.com/Anoop-Kumar-31/Ghost-AI"
             headers["X-Title"] = "Ghost AI"
 
-        # Check cancellation before starting
-        if self._cancel_event.is_set():
-            self.cancelled.emit(self.request_id, "")
-            return
-
-        # Apply conversation context limit before formatting
         context_limit = get_model_context_limit(model)
         trimmed = trim_conversation(
             self.messages,
@@ -241,39 +343,19 @@ class AIChatWorker(QThread):
             "stream": stream,
         }
 
+        resp = self._execute_http_request(url, headers, payload, stream)
+
         try:
-            resp = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                stream=stream,
-                timeout=(10, 20),
-            )
-            with self._response_lock:
-                self._response = resp
-                cancelled = self._cancel_event.is_set()
-            if cancelled:
+            if resp.status_code != 200:
+                err_msg = self._extract_http_error(resp)
                 resp.close()
-                self.cancelled.emit(self.request_id, "")
-                return
-        except Exception as e:
-            if self._cancel_event.is_set():
-                self.cancelled.emit(self.request_id, "")
-                return
-            raise e
+                raise ValueError(err_msg)
 
-        resp.encoding = "utf-8"
-
-        if resp.status_code != 200:
-            self._handle_http_error(resp)
-            return
-
-        accumulated: List[str] = []
-        try:
+            accumulated: List[str] = []
             if stream:
                 for raw_line in resp.iter_lines():
                     if self._cancel_event.is_set():
-                        break
+                        raise RequestCancelled()
                     if not raw_line:
                         continue
                     if isinstance(raw_line, bytes):
@@ -292,6 +374,7 @@ class AIChatWorker(QThread):
                                 content = delta.get("content", "")
                                 if content:
                                     accumulated.append(content)
+                                    self._accumulated_text = "".join(accumulated)
                                     self.chunk_received.emit(self.request_id, content)
                         except json.JSONDecodeError:
                             continue
@@ -301,24 +384,12 @@ class AIChatWorker(QThread):
                 if choices:
                     content = choices[0].get("message", {}).get("content", "")
                     accumulated.append(content)
+                    self._accumulated_text = content
                     self.chunk_received.emit(self.request_id, content)
-        except Exception:
-            if not self._cancel_event.is_set():
-                raise
-        finally:
-            with self._response_lock:
-                if self._response is not None:
-                    try:
-                        self._response.close()
-                    except Exception:
-                        pass
-                    self._response = None
 
-        full_text = "".join(accumulated)
-        if self._cancel_event.is_set():
-            self.cancelled.emit(self.request_id, full_text)
-        else:
-            self.response_finished.emit(self.request_id, full_text)
+            return "".join(accumulated)
+        finally:
+            resp.close()
 
     def _run_anthropic(
         self,
@@ -329,19 +400,14 @@ class AIChatWorker(QThread):
         temperature: float,
         max_tokens: int,
         stream: bool,
-    ) -> None:
-        """Call Anthropic /v1/messages endpoint."""
+    ) -> str:
+        """Execute request for Anthropic /v1/messages endpoint."""
         url = f"{base_url}/v1/messages"
         headers = {
             "Content-Type": "application/json",
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
         }
-
-        # Check cancellation before starting
-        if self._cancel_event.is_set():
-            self.cancelled.emit(self.request_id, "")
-            return
 
         context_limit = get_model_context_limit(model)
         trimmed = trim_conversation(
@@ -361,39 +427,19 @@ class AIChatWorker(QThread):
         if system_prompt:
             payload["system"] = system_prompt
 
+        resp = self._execute_http_request(url, headers, payload, stream)
+
         try:
-            resp = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                stream=stream,
-                timeout=(10, 20),
-            )
-            with self._response_lock:
-                self._response = resp
-                cancelled = self._cancel_event.is_set()
-            if cancelled:
+            if resp.status_code != 200:
+                err_msg = self._extract_http_error(resp)
                 resp.close()
-                self.cancelled.emit(self.request_id, "")
-                return
-        except Exception as e:
-            if self._cancel_event.is_set():
-                self.cancelled.emit(self.request_id, "")
-                return
-            raise e
+                raise ValueError(err_msg)
 
-        resp.encoding = "utf-8"
-
-        if resp.status_code != 200:
-            self._handle_http_error(resp)
-            return
-
-        accumulated: List[str] = []
-        try:
+            accumulated: List[str] = []
             if stream:
                 for raw_line in resp.iter_lines():
                     if self._cancel_event.is_set():
-                        break
+                        raise RequestCancelled()
                     if not raw_line:
                         continue
                     if isinstance(raw_line, bytes):
@@ -410,6 +456,7 @@ class AIChatWorker(QThread):
                                 text = delta.get("text", "")
                                 if text:
                                     accumulated.append(text)
+                                    self._accumulated_text = "".join(accumulated)
                                     self.chunk_received.emit(self.request_id, text)
                             elif event_type == "message_stop":
                                 break
@@ -422,27 +469,15 @@ class AIChatWorker(QThread):
                     if block.get("type") == "text":
                         text = block.get("text", "")
                         accumulated.append(text)
+                        self._accumulated_text = text
                         self.chunk_received.emit(self.request_id, text)
-        except Exception:
-            if not self._cancel_event.is_set():
-                raise
+
+            return "".join(accumulated)
         finally:
-            with self._response_lock:
-                if self._response is not None:
-                    try:
-                        self._response.close()
-                    except Exception:
-                        pass
-                    self._response = None
+            resp.close()
 
-        full_text = "".join(accumulated)
-        if self._cancel_event.is_set():
-            self.cancelled.emit(self.request_id, full_text)
-        else:
-            self.response_finished.emit(self.request_id, full_text)
-
-    def _handle_http_error(self, response: requests.Response) -> None:
-        """Emit friendly error messages for HTTP status codes."""
+    def _extract_http_error(self, response: requests.Response) -> str:
+        """Extract sanitized, friendly error messages without echoing secrets or authorization tokens."""
         status = response.status_code
         try:
             err_json = response.json()
@@ -456,16 +491,16 @@ class AIChatWorker(QThread):
             elif "message" in err_json:
                 err_msg = str(err_json["message"])
         except Exception:
-            err_msg = response.text[:200]
+            err_msg = response.text[:140]
+
+        # Sanitize error detail to never echo headers or keys
+        err_msg = str(err_msg).replace("Bearer ", "").strip()
 
         if status == 401:
-            msg = f"Invalid API Key (401 Unauthorized).\nPlease verify your API key in ⚙ Settings.\nDetails: {err_msg}"
+            return f"Invalid API Key (401 Unauthorized).\nPlease verify your API key in Settings.\nDetails: {err_msg}"
         elif status == 429:
-            msg = f"Rate Limit or Quota Exceeded (429).\nPlease check your AI provider account balance.\nDetails: {err_msg}"
+            return f"Rate Limit or Quota Exceeded (429).\nPlease check your provider account balance.\nDetails: {err_msg}"
         elif status == 404:
-            msg = f"Model or endpoint not found (404).\nPlease check your model name or Base URL.\nDetails: {err_msg}"
+            return f"Model or Endpoint Not Found (404).\nPlease verify model name or URL.\nDetails: {err_msg}"
         else:
-            msg = f"API Error (Status {status}):\n{err_msg or response.reason}"
-
-        self.error.emit(self.request_id, msg)
-
+            return f"API Error (Status {status}):\n{err_msg or response.reason}"

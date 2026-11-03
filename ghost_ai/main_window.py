@@ -11,6 +11,7 @@ Strictly preserves the standard ArrowCursor across all elements.
 """
 
 import sys
+import time
 import logging
 from typing import Optional, List, Dict, Any
 
@@ -108,6 +109,9 @@ class MainWindow(QWidget):
         self._open_tabs: List[str] = []
         self._active_chat_id: Optional[str] = None
         self._view_mode: str = "list"
+        self._is_shutting_down: bool = False
+        self._shutdown_timer: Optional[QTimer] = None
+        self._shutdown_deadline: float = 0.0
 
         # Window Flags: Frameless, Tool, Always On Top
         self.setWindowFlags(
@@ -334,7 +338,9 @@ class MainWindow(QWidget):
         self._schedule_save()
 
     def delete_chat(self, chat_id: str) -> None:
-        """Delete a chat conversation."""
+        """Delete a chat conversation and cancel any running generation."""
+        self.chat_view.cancel_generations_for_chat(chat_id)
+
         if chat_id in self._open_tabs:
             self._open_tabs.remove(chat_id)
 
@@ -406,16 +412,62 @@ class MainWindow(QWidget):
         self.update()
         self._schedule_save()
 
+    def closeEvent(self, event) -> None:
+        """Handle window close event with non-blocking graceful shutdown."""
+        if self._is_shutting_down:
+            if self.chat_view.has_active_workers():
+                event.ignore()
+                return
+            event.accept()
+            return
+
+        if self.chat_view.has_active_workers():
+            event.ignore()
+            self.close_application()
+            return
+
+        self._finish_close()
+        event.accept()
+
     def close_application(self) -> None:
-        """Safely persist state and terminate the application."""
+        """Safely persist state and terminate the application via asynchronous graceful shutdown."""
+        if self._is_shutting_down:
+            return
+
+        self._is_shutting_down = True
         self._save_timer.stop()
-        stopped = self.chat_view.shutdown_workers(5000)
-        if not stopped:
-            logger.warning("Background tasks could not be cleanly terminated within timeout.")
+
+        if not self.chat_view.has_active_workers():
+            self._finish_close()
+            return
+
+        # Request cooperative cancellation across all AI and voice threads
+        self.chat_view.cancel_all_workers()
+
+        # Non-blocking async poll loop
+        self._shutdown_deadline = time.time() + 5.0
+        self._shutdown_timer = QTimer(self)
+        self._shutdown_timer.setInterval(50)
+        self._shutdown_timer.timeout.connect(self._check_shutdown_complete)
+        self._shutdown_timer.start()
+
+    def _check_shutdown_complete(self) -> None:
+        """Poll worker status until all threads stop or deadline expires."""
+        if not self.chat_view.has_active_workers() or time.time() >= self._shutdown_deadline:
+            if self._shutdown_timer:
+                self._shutdown_timer.stop()
+                self._shutdown_timer = None
+            self._finish_close()
+
+    def _finish_close(self) -> None:
+        """Finalize application termination."""
         self._save_state()
-        self.controls.close()
+        if hasattr(self, "controls"):
+            self.controls.close()
         self.close()
-        QGuiApplication.quit()
+        app = QGuiApplication.instance()
+        if app and "pytest" not in sys.modules:
+            app.quit()
 
     def _schedule_save(self) -> None:
         self._save_timer.start()
