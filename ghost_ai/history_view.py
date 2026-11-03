@@ -417,7 +417,7 @@ class HistoryView(QWidget):
 
         shortcut_badge = QLabel("Ctrl K", search_card)
         shortcut_badge.setStyleSheet(
-            "color: #52525b; font-size: 11px; background: transparent; font-weight: 500;"
+            "color: #52525b; font-size: 11px; background: transparent; font-weight: 500; border:none;"
         )
         search_layout.addWidget(shortcut_badge)
 

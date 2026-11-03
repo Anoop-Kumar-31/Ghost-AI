@@ -10,6 +10,7 @@ Frameless, translucent, always-on-top window supporting:
 Strictly preserves the standard ArrowCursor across all elements.
 """
 
+import sys
 import logging
 from typing import Optional, List, Dict, Any
 
@@ -31,7 +32,12 @@ from PySide6.QtWidgets import (
 )
 
 from .controls import ControlsWindow
-from .platform_utils import set_click_through, exclude_from_taskbar, set_capture_excluded
+from .platform_utils import (
+    set_click_through,
+    exclude_from_taskbar,
+    set_capture_excluded,
+    is_capture_excluded,
+)
 from .persistence import (
     load_data,
     save_data,
@@ -264,8 +270,8 @@ class MainWindow(QWidget):
         hwnd = int(self.winId())
         exclude_from_taskbar(hwnd)
         capture_ok = set_capture_excluded(hwnd, True)
-        if not capture_ok:
-            logger.warning("Screen capture protection could not be enabled for main window")
+        if not capture_ok or not is_capture_excluded(hwnd):
+            logger.warning("Screen capture protection could not be verified for main window")
 
         # Initialize and position floating controls
         self.controls.show_controls(self.geometry())
@@ -383,10 +389,14 @@ class MainWindow(QWidget):
         self.set_ghost_mode(not self._ghost_mode)
 
     def set_ghost_mode(self, enabled: bool) -> None:
-        """Set true click-through Ghost Mode on or off."""
-        self._ghost_mode = enabled
+        """Set true click-through Ghost Mode on or off after verifying platform success."""
         hwnd = int(self.winId())
-        set_click_through(hwnd, enabled)
+        ok = set_click_through(hwnd, enabled)
+        if not ok and sys.platform == "win32":
+            logger.warning("Failed to toggle native click-through on HWND %s", hwnd)
+            return
+
+        self._ghost_mode = enabled
         self.controls.set_ghost_active(enabled)
         self.header_bar.set_ghost_mode_active(enabled)
         if enabled:
@@ -399,7 +409,9 @@ class MainWindow(QWidget):
     def close_application(self) -> None:
         """Safely persist state and terminate the application."""
         self._save_timer.stop()
-        self.chat_view.shutdown_workers(5000)
+        stopped = self.chat_view.shutdown_workers(5000)
+        if not stopped:
+            logger.warning("Background tasks could not be cleanly terminated within timeout.")
         self._save_state()
         self.controls.close()
         self.close()

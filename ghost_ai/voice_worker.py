@@ -12,7 +12,11 @@ import logging
 import threading
 from typing import Optional, List
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore
+
 from PySide6.QtCore import QThread, Signal
 
 logger = logging.getLogger(__name__)
@@ -107,6 +111,10 @@ class MicVoiceWorker(QThread):
         self._stop_flag.set()
 
     def run(self):
+        if np is None:
+            self.error.emit("numpy not installed.\nRun: pip install numpy sounddevice faster-whisper")
+            return
+
         try:
             import sounddevice as sd  # type: ignore
         except ImportError:
@@ -138,8 +146,13 @@ class MicVoiceWorker(QThread):
             nonlocal total_frames
             if status_flags:
                 logger.warning("Mic status: %s", status_flags)
-            self._frames.append(indata.copy())
-            total_frames += frames
+            remaining = max_allowed_frames - total_frames
+            if remaining <= 0:
+                self._stop_flag.set()
+                return
+            to_add = indata[:remaining].copy() if len(indata) > remaining else indata.copy()
+            self._frames.append(to_add)
+            total_frames += len(to_add)
             if total_frames >= max_allowed_frames:
                 logger.warning("Mic recording reached maximum duration (%ds); stopping.", MAX_RECORDING_SECONDS)
                 self._stop_flag.set()
@@ -164,8 +177,9 @@ class MicVoiceWorker(QThread):
 
         self.status.emit("transcribing")
         logger.info("MicVoiceWorker: transcribing recorded frames...")
+        frames_to_process, self._frames = self._frames, []
         try:
-            audio = np.concatenate(self._frames, axis=0)
+            audio = np.concatenate(frames_to_process, axis=0)
             if audio.ndim > 1 and audio.shape[1] > 1:
                 audio = audio.mean(axis=1)
             audio = audio.flatten()
@@ -177,6 +191,9 @@ class MicVoiceWorker(QThread):
             logger.error("MicVoiceWorker transcription error: %s", exc)
             self.error.emit(f"Transcription error: {exc}")
         finally:
+            frames_to_process.clear()
+            if "audio" in locals():
+                del audio
             self.status.emit("done")
 
 
@@ -226,6 +243,10 @@ class SysAudioWorker(QThread):
         return None, None
 
     def run(self):
+        if np is None:
+            self.error.emit("numpy not installed.\nRun: pip install numpy sounddevice faster-whisper")
+            return
+
         try:
             import sounddevice as sd  # type: ignore
         except ImportError:
@@ -258,8 +279,13 @@ class SysAudioWorker(QThread):
 
         def audio_callback(indata, frames, time_info, status_flags):
             nonlocal total_frames
-            self._frames.append(indata.copy())
-            total_frames += frames
+            remaining = max_allowed_frames - total_frames
+            if remaining <= 0:
+                self._stop_flag.set()
+                return
+            to_add = indata[:remaining].copy() if len(indata) > remaining else indata.copy()
+            self._frames.append(to_add)
+            total_frames += len(to_add)
             if total_frames >= max_allowed_frames:
                 logger.warning("System audio recording reached maximum duration (%ds); stopping.", MAX_RECORDING_SECONDS)
                 self._stop_flag.set()
@@ -285,8 +311,9 @@ class SysAudioWorker(QThread):
 
         self.status.emit("transcribing")
         logger.info("SysAudioWorker: transcribing recorded frames...")
+        frames_to_process, self._frames = self._frames, []
         try:
-            audio = np.concatenate(self._frames, axis=0)
+            audio = np.concatenate(frames_to_process, axis=0)
             if audio.ndim > 1 and audio.shape[1] > 1:
                 audio = audio.mean(axis=1)
             audio = audio.flatten()
@@ -298,4 +325,7 @@ class SysAudioWorker(QThread):
             logger.error("SysAudioWorker transcription error: %s", exc)
             self.error.emit(f"Transcription error: {exc}")
         finally:
+            frames_to_process.clear()
+            if "audio" in locals():
+                del audio
             self.status.emit("done")

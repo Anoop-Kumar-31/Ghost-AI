@@ -14,6 +14,32 @@ from PySide6.QtCore import QThread, Signal
 
 logger = logging.getLogger(__name__)
 
+# Known model context window limits (tokens)
+MODEL_CONTEXT_LIMITS: Dict[str, int] = {
+    "gpt-4o-mini": 128000,
+    "gpt-4o": 128000,
+    "o3-mini": 128000,
+    "gpt-3.5-turbo": 16384,
+    "claude-3-5-sonnet": 200000,
+    "claude-3-5-haiku": 200000,
+    "claude-3-opus": 200000,
+    "llama-3.3-70b": 128000,
+    "llama-3.1-8b": 128000,
+    "deepseek-chat": 64000,
+    "deepseek-reasoner": 64000,
+    "llama3.2": 8192,
+    "mistral": 32768,
+}
+
+
+def get_model_context_limit(model_name: str) -> int:
+    """Return model context token limit or safe fallback."""
+    model_lower = model_name.lower()
+    for key, limit in MODEL_CONTEXT_LIMITS.items():
+        if key in model_lower:
+            return limit
+    return 16384
+
 
 def estimate_tokens(text: str) -> int:
     """Rough character-based token estimation (~4 chars per token)."""
@@ -23,23 +49,43 @@ def estimate_tokens(text: str) -> int:
 def trim_conversation(
     raw_messages: List[Dict[str, Any]],
     max_budget_tokens: int = 12000,
+    system_prompt: str = "",
+    output_reserve: int = 0,
 ) -> List[Dict[str, Any]]:
     """
-    Trim older messages when the conversation exceeds token budget.
-    Always preserves the most recent messages.
+    Trim conversation history to fit within model context budget,
+    reserving space for system prompt and generated response tokens.
+    Always preserves newest messages.
     """
     if not raw_messages:
         return []
 
-    # Calculate token count from newest to oldest
+    system_tokens = estimate_tokens(system_prompt) if system_prompt else 0
+    total_deductions = output_reserve + system_tokens
+    if max_budget_tokens > total_deductions + 10:
+        effective_budget = max(10, max_budget_tokens - total_deductions)
+    else:
+        effective_budget = max_budget_tokens
+
     total_tokens = 0
     kept_reversed: List[Dict[str, Any]] = []
 
-    for msg in reversed(raw_messages):
+    for i, msg in enumerate(reversed(raw_messages)):
         content = msg.get("content", "")
         tokens = estimate_tokens(content)
-        if kept_reversed and (total_tokens + tokens > max_budget_tokens):
+
+        # If the latest message alone exceeds effective budget, truncate it to fit
+        if i == 0 and tokens > effective_budget:
+            char_budget = max(100, effective_budget * 4)
+            truncated_content = content[:char_budget] + "\n...[truncated for context budget]"
+            msg_copy = dict(msg)
+            msg_copy["content"] = truncated_content
+            kept_reversed.append(msg_copy)
             break
+
+        if kept_reversed and (total_tokens + tokens > effective_budget):
+            break
+
         kept_reversed.append(msg)
         total_tokens += tokens
 
@@ -80,15 +126,13 @@ class AIChatWorker(QThread):
     Background worker thread that communicates with the LLM API.
     Emits chunk_received for real-time streaming, response_finished when complete,
     cancelled when aborted with partial content, or error.
+    Note: QThread's built-in finished() signal is preserved for thread exit detection.
     """
 
     chunk_received = Signal(str, str)         # (request_id, chunk)
     response_finished = Signal(str, str)      # (request_id, full_response)
     cancelled = Signal(str, str)              # (request_id, partial_response)
     error = Signal(str, str)                  # (request_id, error_message)
-
-    # Backward compatibility signal for existing tests / callers
-    finished = Signal(str)
 
     def __init__(
         self,
@@ -175,8 +219,19 @@ class AIChatWorker(QThread):
             headers["HTTP-Referer"] = "https://github.com/Anoop-Kumar-31/Ghost-AI"
             headers["X-Title"] = "Ghost AI"
 
+        # Check cancellation before starting
+        if self._cancel_event.is_set():
+            self.cancelled.emit(self.request_id, "")
+            return
+
         # Apply conversation context limit before formatting
-        trimmed = trim_conversation(self.messages, max_budget_tokens=12000)
+        context_limit = get_model_context_limit(model)
+        trimmed = trim_conversation(
+            self.messages,
+            max_budget_tokens=context_limit,
+            system_prompt=system_prompt,
+            output_reserve=max_tokens,
+        )
         formatted_msgs = format_messages_for_openai(trimmed, system_prompt)
         payload = {
             "model": model,
@@ -196,8 +251,14 @@ class AIChatWorker(QThread):
             )
             with self._response_lock:
                 self._response = resp
+                cancelled = self._cancel_event.is_set()
+            if cancelled:
+                resp.close()
+                self.cancelled.emit(self.request_id, "")
+                return
         except Exception as e:
             if self._cancel_event.is_set():
+                self.cancelled.emit(self.request_id, "")
                 return
             raise e
 
@@ -208,8 +269,8 @@ class AIChatWorker(QThread):
             return
 
         accumulated: List[str] = []
-        if stream:
-            try:
+        try:
+            if stream:
                 for raw_line in resp.iter_lines():
                     if self._cancel_event.is_set():
                         break
@@ -234,23 +295,30 @@ class AIChatWorker(QThread):
                                     self.chunk_received.emit(self.request_id, content)
                         except json.JSONDecodeError:
                             continue
-            except Exception:
-                if not self._cancel_event.is_set():
-                    raise
-        else:
-            data = resp.json()
-            choices = data.get("choices", [])
-            if choices:
-                content = choices[0].get("message", {}).get("content", "")
-                accumulated.append(content)
-                self.chunk_received.emit(self.request_id, content)
+            else:
+                data = resp.json()
+                choices = data.get("choices", [])
+                if choices:
+                    content = choices[0].get("message", {}).get("content", "")
+                    accumulated.append(content)
+                    self.chunk_received.emit(self.request_id, content)
+        except Exception:
+            if not self._cancel_event.is_set():
+                raise
+        finally:
+            with self._response_lock:
+                if self._response is not None:
+                    try:
+                        self._response.close()
+                    except Exception:
+                        pass
+                    self._response = None
 
         full_text = "".join(accumulated)
         if self._cancel_event.is_set():
             self.cancelled.emit(self.request_id, full_text)
         else:
             self.response_finished.emit(self.request_id, full_text)
-            self.finished.emit(full_text)
 
     def _run_anthropic(
         self,
@@ -270,7 +338,18 @@ class AIChatWorker(QThread):
             "anthropic-version": "2023-06-01",
         }
 
-        trimmed = trim_conversation(self.messages, max_budget_tokens=12000)
+        # Check cancellation before starting
+        if self._cancel_event.is_set():
+            self.cancelled.emit(self.request_id, "")
+            return
+
+        context_limit = get_model_context_limit(model)
+        trimmed = trim_conversation(
+            self.messages,
+            max_budget_tokens=context_limit,
+            system_prompt=system_prompt,
+            output_reserve=max_tokens,
+        )
         formatted_msgs = format_messages_for_anthropic(trimmed)
         payload = {
             "model": model,
@@ -292,8 +371,14 @@ class AIChatWorker(QThread):
             )
             with self._response_lock:
                 self._response = resp
+                cancelled = self._cancel_event.is_set()
+            if cancelled:
+                resp.close()
+                self.cancelled.emit(self.request_id, "")
+                return
         except Exception as e:
             if self._cancel_event.is_set():
+                self.cancelled.emit(self.request_id, "")
                 return
             raise e
 
@@ -304,8 +389,8 @@ class AIChatWorker(QThread):
             return
 
         accumulated: List[str] = []
-        if stream:
-            try:
+        try:
+            if stream:
                 for raw_line in resp.iter_lines():
                     if self._cancel_event.is_set():
                         break
@@ -330,24 +415,31 @@ class AIChatWorker(QThread):
                                 break
                         except json.JSONDecodeError:
                             continue
-            except Exception:
-                if not self._cancel_event.is_set():
-                    raise
-        else:
-            data = resp.json()
-            content_blocks = data.get("content", [])
-            for block in content_blocks:
-                if block.get("type") == "text":
-                    text = block.get("text", "")
-                    accumulated.append(text)
-                    self.chunk_received.emit(self.request_id, text)
+            else:
+                data = resp.json()
+                content_blocks = data.get("content", [])
+                for block in content_blocks:
+                    if block.get("type") == "text":
+                        text = block.get("text", "")
+                        accumulated.append(text)
+                        self.chunk_received.emit(self.request_id, text)
+        except Exception:
+            if not self._cancel_event.is_set():
+                raise
+        finally:
+            with self._response_lock:
+                if self._response is not None:
+                    try:
+                        self._response.close()
+                    except Exception:
+                        pass
+                    self._response = None
 
         full_text = "".join(accumulated)
         if self._cancel_event.is_set():
             self.cancelled.emit(self.request_id, full_text)
         else:
             self.response_finished.emit(self.request_id, full_text)
-            self.finished.emit(full_text)
 
     def _handle_http_error(self, response: requests.Response) -> None:
         """Emit friendly error messages for HTTP status codes."""

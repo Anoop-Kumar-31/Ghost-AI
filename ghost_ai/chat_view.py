@@ -622,7 +622,7 @@ class ChatView(QWidget):
         self.model_badge.clicked.connect(self.settings_requested.emit)
         bottom_row.addWidget(self.model_badge)
 
-        # Circular send button '↑'
+        # Squaricle send button '↑'
         self.send_btn = QPushButton(self.input_card)
         self.send_btn.setFixedSize(28, 28)
         self.send_btn.setCursor(Qt.CursorShape.ArrowCursor)
@@ -632,13 +632,16 @@ class ChatView(QWidget):
         self.send_btn.setStyleSheet(
             """
             QPushButton {
-                background-color: #1e1e28;
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 14px;
+                background-color: #8b5cf6;
+                border: 1px solid rgba(185, 154, 255, 0.25);
+                border-radius: 8px;
             }
             QPushButton:hover {
+                background-color: #9d75ff;
+                border-color: #b99aff;
+            }
+            QPushButton:pressed {
                 background-color: #7c3aed;
-                border-color: #8b5cf6;
             }
             """
         )
@@ -719,10 +722,18 @@ class ChatView(QWidget):
             None,
         )
 
+        if active_ctx:
+            self._current_worker = active_ctx.get("worker")
+            self._set_generating_state(True)
+        else:
+            self._current_worker = None
+            self._set_generating_state(False)
+
         if not messages and not active_ctx:
             empty_lbl = QLabel(
                 "💬 Start a conversation with Ghost AI.\n"
-                "Responses are streaming, encrypted in transit, and completely invisible to screen capture.",
+                "Responses stream from your selected AI provider. "
+                "Screen-capture exclusion is best-effort and depends on your operating system and capture method.",
                 self.messages_container,
             )
             empty_lbl.setObjectName("EmptyChatPlaceholder")
@@ -748,15 +759,6 @@ class ChatView(QWidget):
                 bubble = MessageBubble("assistant", disp_text, datetime.now().isoformat(), self.messages_container)
                 active_ctx["bubble"] = bubble
                 self._add_bubble_row(bubble)
-                self._current_worker = active_ctx.get("worker")
-                self._set_generating_state(True)
-            else:
-                is_any_running = any(
-                    ctx["worker"].isRunning()
-                    for ctx in self._generation_contexts.values()
-                    if ctx.get("worker")
-                )
-                self._set_generating_state(is_any_running)
 
         self._scroll_to_bottom()
         self.check_api_key_banner()
@@ -865,16 +867,19 @@ class ChatView(QWidget):
 
     def _set_generating_state(self, generating: bool) -> None:
         if generating:
-            self.send_btn.setIcon(get_icon("square", 13, "#ffffff"))
+            self.send_btn.setIcon(get_icon("square", 12, "#ffffff"))
             self.send_btn.setStyleSheet(
                 """
                 QPushButton {
                     background-color: #dc2626;
                     border: 1px solid #ef4444;
-                    border-radius: 14px;
+                    border-radius: 8px;
                 }
                 QPushButton:hover {
                     background-color: #b91c1c;
+                }
+                QPushButton:pressed {
+                    background-color: #991b1b;
                 }
                 """
             )
@@ -883,13 +888,16 @@ class ChatView(QWidget):
             self.send_btn.setStyleSheet(
                 """
                 QPushButton {
-                    background-color: #1e1e28;
-                    border: 1px solid rgba(255, 255, 255, 0.12);
-                    border-radius: 14px;
+                    background-color: #8b5cf6;
+                    border: 1px solid rgba(185, 154, 255, 0.25);
+                    border-radius: 8px;
                 }
                 QPushButton:hover {
+                    background-color: #9d75ff;
+                    border-color: #b99aff;
+                }
+                QPushButton:pressed {
                     background-color: #7c3aed;
-                    border-color: #8b5cf6;
                 }
                 """
             )
@@ -902,15 +910,26 @@ class ChatView(QWidget):
             context["buffer"] = chunk
         else:
             context["buffer"] += chunk
+        context["pending_render"] = True
 
         if self._active_chat and self._active_chat.get("id") == context["chat_id"]:
-            bubble = context.get("bubble")
-            if bubble:
-                bubble.update_content(context["buffer"])
-                self._scroll_to_bottom()
+            if not self._stream_timer.isActive():
+                self._stream_timer.start()
 
     def _flush_stream_buffer(self) -> None:
-        pass
+        if not self._active_chat:
+            return
+        active_id = self._active_chat.get("id")
+        for ctx in self._generation_contexts.values():
+            if ctx.get("chat_id") == active_id and ctx.get("pending_render"):
+                bubble = ctx.get("bubble")
+                if bubble:
+                    bubble.update_content(ctx["buffer"])
+                    self._scroll_to_bottom()
+                ctx["pending_render"] = False
+
+        if not any(ctx.get("pending_render") for ctx in self._generation_contexts.values()):
+            self._stream_timer.stop()
 
     def _on_worker_finished(self, request_id: str, full_response: str) -> None:
         context = self._generation_contexts.pop(request_id, None)
@@ -935,11 +954,11 @@ class ChatView(QWidget):
             if bubble:
                 bubble.update_content(final_text)
                 self._scroll_to_bottom()
-
-        if self._current_worker == context.get("worker"):
             self._current_worker = None
-        if not self._generation_contexts:
             self._set_generating_state(False)
+
+        if not any(ctx.get("pending_render") for ctx in self._generation_contexts.values()):
+            self._stream_timer.stop()
 
     def _on_worker_cancelled(self, request_id: str, partial_response: str) -> None:
         context = self._generation_contexts.pop(request_id, None)
@@ -969,11 +988,11 @@ class ChatView(QWidget):
                 disp = final_text if (final_text and final_text != "...") else "(Cancelled)"
                 bubble.update_content(f"{disp}\n\n*[Response cancelled]*")
                 self._scroll_to_bottom()
-
-        if self._current_worker == context.get("worker"):
             self._current_worker = None
-        if not self._generation_contexts:
             self._set_generating_state(False)
+
+        if not any(ctx.get("pending_render") for ctx in self._generation_contexts.values()):
+            self._stream_timer.stop()
 
     def _on_worker_error(self, request_id: str, err_msg: str) -> None:
         context = self._generation_contexts.pop(request_id, None)
@@ -985,15 +1004,17 @@ class ChatView(QWidget):
             if bubble:
                 bubble.update_content(f"⚠️ {err_msg}")
                 self._scroll_to_bottom()
-
-        if self._current_worker == context.get("worker"):
             self._current_worker = None
-        if not self._generation_contexts:
             self._set_generating_state(False)
 
-    def shutdown_workers(self, timeout_ms: int = 5000) -> None:
+        if not any(ctx.get("pending_render") for ctx in self._generation_contexts.values()):
+            self._stream_timer.stop()
+
+    def shutdown_workers(self, timeout_ms: int = 5000) -> bool:
         """Safely terminate any active AI workers and voice recording on shutdown."""
-        self.stop_voice_recording()
+        self._stream_timer.stop()
+        voice_clean = self.stop_voice_recording(timeout_ms=min(1500, timeout_ms))
+
         workers = [
             ctx["worker"]
             for ctx in list(self._generation_contexts.values())
@@ -1005,9 +1026,14 @@ class ChatView(QWidget):
         for w in workers:
             if w.isRunning():
                 w.cancel()
+
+        ai_clean = True
         for w in workers:
             if w.isRunning():
-                w.wait(timeout_ms)
+                if not w.wait(timeout_ms):
+                    ai_clean = False
+
+        return voice_clean and ai_clean
 
     # ------------------------------------------------------------------
     # Voice-to-Text (Microphone & System/Meeting Audio WASAPI Loopback)
@@ -1160,15 +1186,19 @@ class ChatView(QWidget):
         if st == "transcribing":
             self.voice_status_lbl.setText("⏳ Transcribing audio with local Whisper AI...")
 
-    def _cancel_voice_recording(self) -> None:
+    def _cancel_voice_recording(self, timeout_ms: int = 1500) -> bool:
+        clean = True
         if self._mic_worker and self._mic_worker.isRunning():
             self._mic_worker.stop()
-            self._mic_worker.wait(1000)
+            if not self._mic_worker.wait(timeout_ms):
+                clean = False
         if self._sys_worker and self._sys_worker.isRunning():
             self._sys_worker.stop()
-            self._sys_worker.wait(1000)
+            if not self._sys_worker.wait(timeout_ms):
+                clean = False
         self._reset_voice_buttons()
         self.voice_status_frame.hide()
+        return clean
 
     def _reset_voice_buttons(self) -> None:
         self.mic_btn.setText("")
@@ -1176,6 +1206,6 @@ class ChatView(QWidget):
         self.sys_audio_btn.setText("")
         self.sys_audio_btn.setStyleSheet(self._sys_audio_btn_idle_style())
 
-    def stop_voice_recording(self) -> None:
+    def stop_voice_recording(self, timeout_ms: int = 1500) -> bool:
         """Safely terminate any active voice workers on shutdown or view change."""
-        self._cancel_voice_recording()
+        return self._cancel_voice_recording(timeout_ms=timeout_ms)

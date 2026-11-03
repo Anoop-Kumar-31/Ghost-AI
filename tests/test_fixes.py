@@ -70,6 +70,17 @@ def test_config_validation_clamping():
     cfg6 = validate_config({"base_url": "https://api.openai.com/v1/"})
     assert cfg6["base_url"] == "https://api.openai.com/v1"
 
+    # Strict stream string parsing
+    cfg7 = validate_config({"stream": "false"})
+    assert cfg7["stream"] is False
+
+    cfg8 = validate_config({"stream": "true"})
+    assert cfg8["stream"] is True
+
+    # Invalid provider fallback
+    cfg9 = validate_config({"provider": "RandomMaliciousString123"})
+    assert cfg9["provider"] == DEFAULT_CONFIG["provider"]
+
 
 def test_persistence_open_tabs_and_isolation(tmp_path: Path):
     """Verify open_tabs filtering, active_chat_id fallback, and deepcopy safety."""
@@ -110,11 +121,47 @@ def test_ai_worker_request_id_and_cancellation():
 
 
 def test_chat_view_shutdown_workers(qapp):
-    """Verify ChatView.shutdown_workers executes cleanly without exceptions."""
+    """Verify ChatView.shutdown_workers executes cleanly and returns True."""
     view = ChatView()
     view.show()
     qapp.processEvents()
-    view.shutdown_workers(timeout_ms=100)
+    clean = view.shutdown_workers(timeout_ms=100)
+    assert clean is True
+    view.close()
+
+
+def test_chat_switching_worker_state(qapp):
+    """Verify switching to an inactive chat resets _current_worker and generating state."""
+    view = ChatView()
+    view.show()
+    qapp.processEvents()
+
+    chat_a = create_chat_dict("Chat A")
+    chat_b = create_chat_dict("Chat B")
+
+    view.set_active_chat(chat_a)
+    # Simulate a fake running worker bound to Chat A
+    worker = AIChatWorker([], {"api_key": "x"}, request_id="req-a")
+    view._generation_contexts["req-a"] = {
+        "chat_id": chat_a["id"],
+        "chat": chat_a,
+        "bubble": None,
+        "buffer": "",
+        "worker": worker,
+    }
+    view._current_worker = worker
+    view._set_generating_state(True)
+
+    # Now switch to Chat B which has NO active generation
+    view.set_active_chat(chat_b)
+    assert view._current_worker is None
+    # Generating state for Chat B must be False
+    assert view._active_chat["id"] == chat_b["id"]
+
+    # Switch back to Chat A -> should re-attach worker and state
+    view.set_active_chat(chat_a)
+    assert view._current_worker == worker
+
     view.close()
 
 

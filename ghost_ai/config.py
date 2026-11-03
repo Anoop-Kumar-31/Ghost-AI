@@ -109,23 +109,34 @@ def validate_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(raw_config, dict):
         return validated
 
-    # Provider
-    provider = str(raw_config.get("provider", validated["provider"])).strip()
-    if provider in PROVIDER_PRESETS or provider:
-        validated["provider"] = provider
+    # Provider: allow predefined presets or explicit Custom
+    raw_provider = raw_config.get("provider")
+    if isinstance(raw_provider, str):
+        cleaned_p = raw_provider.strip()
+        if cleaned_p in PROVIDER_PRESETS:
+            validated["provider"] = cleaned_p
+        elif cleaned_p.lower().startswith("custom"):
+            validated["provider"] = "Custom (OpenAI-Compatible)"
+        # Otherwise fallback to default provider
+    else:
+        validated["provider"] = validated["provider"]
 
     # Base URL
-    base_url = str(raw_config.get("base_url", validated["base_url"])).strip().rstrip("/")
-    if base_url.startswith(("http://", "https://")):
-        validated["base_url"] = base_url
+    raw_base = raw_config.get("base_url")
+    if isinstance(raw_base, str):
+        base_url = raw_base.strip().rstrip("/")
+        if base_url.startswith(("http://", "https://")):
+            validated["base_url"] = base_url
 
     # Model
-    model = str(raw_config.get("model", validated["model"])).strip()
-    if model:
-        validated["model"] = model
+    raw_model = raw_config.get("model")
+    if isinstance(raw_model, str) and raw_model.strip():
+        validated["model"] = raw_model.strip()
 
     # API Key
-    validated["api_key"] = str(raw_config.get("api_key", "")).strip()
+    raw_key = raw_config.get("api_key")
+    if isinstance(raw_key, str):
+        validated["api_key"] = raw_key.strip()
 
     # Temperature (clamp between 0.0 and 2.0)
     try:
@@ -141,8 +152,14 @@ def validate_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
     except (ValueError, TypeError):
         validated["max_tokens"] = 2048
 
-    # Stream
-    validated["stream"] = bool(raw_config.get("stream", True))
+    # Stream (strict bool and string parsing)
+    raw_stream = raw_config.get("stream")
+    if isinstance(raw_stream, str):
+        validated["stream"] = raw_stream.strip().lower() in ("true", "1", "yes")
+    elif raw_stream is not None:
+        validated["stream"] = bool(raw_stream)
+    else:
+        validated["stream"] = True
 
     # System prompt
     validated["system_prompt"] = str(raw_config.get("system_prompt", DEFAULT_SYSTEM_PROMPT))
